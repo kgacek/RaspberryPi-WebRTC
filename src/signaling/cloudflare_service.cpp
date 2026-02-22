@@ -14,8 +14,8 @@ static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::stri
 }
 
 std::shared_ptr<CloudflareService> CloudflareService::Create(Args args,
-                                                              std::shared_ptr<Conductor> conductor,
-                                                              boost::asio::io_context &ioc) {
+                                                             std::shared_ptr<Conductor> conductor,
+                                                             boost::asio::io_context &ioc) {
     auto service = std::make_shared<CloudflareService>(args, conductor, ioc);
     return service;
 }
@@ -65,7 +65,9 @@ void CloudflareService::Connect() {
     PeerConfig config;
     config.uid = args_.uid;
     config.on_local_sdp = [this](const std::string &peer_id, const std::string &sdp,
-                                  const std::string &type) { OnLocalSdp(peer_id, sdp, type); };
+                                 const std::string &type) {
+        OnLocalSdp(peer_id, sdp, type);
+    };
 
     auto peer = CreatePeer(config);
     if (!peer) {
@@ -98,13 +100,12 @@ void CloudflareService::Disconnect() {
 }
 
 std::string CloudflareService::CreateCloudflareSession() {
-    std::string url =
-        "https://rtc.live.cloudflare.com/v1/apps/" + cf_app_id_ + "/sessions/new";
+    std::string url = "https://rtc.live.cloudflare.com/v1/apps/" + cf_app_id_ + "/sessions/new";
 
     nlohmann::json payload = nlohmann::json::object();
 
     std::map<std::string, std::string> headers = {{"Authorization", "Bearer " + cf_token_},
-                                                   {"Content-Type", "application/json"}};
+                                                  {"Content-Type", "application/json"}};
 
     auto response = HttpPost(url, payload, headers);
 
@@ -131,12 +132,12 @@ void CloudflareService::OnLocalSdp(const std::string &peer_id, const std::string
     std::string url = "https://rtc.live.cloudflare.com/v1/apps/" + cf_app_id_ + "/sessions/" +
                       cloudflare_session_id_ + "/tracks/new";
 
-    nlohmann::json payload = {{"sessionDescription", {{"type", "offer"}, {"sdp", sdp}}},
-                              {"tracks",
-                               {{{"location", "local"}, {"trackName", "camera"}, {"mid", video_mid}}}}};
+    nlohmann::json payload = {
+        {"sessionDescription", {{"type", "offer"}, {"sdp", sdp}}},
+        {"tracks", {{{"location", "local"}, {"trackName", "camera"}, {"mid", video_mid}}}}};
 
     std::map<std::string, std::string> headers = {{"Authorization", "Bearer " + cf_token_},
-                                                   {"Content-Type", "application/json"}};
+                                                  {"Content-Type", "application/json"}};
 
     auto response = HttpPost(url, payload, headers);
 
@@ -173,13 +174,12 @@ bool CloudflareService::RegisterWithBackend() {
     std::stringstream ss;
     ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%SZ");
 
-    nlohmann::json payload = {{"status", "ACTIVE"},
-                              {"metadata",
-                               {{"cloudflareSessionId", cloudflare_session_id_},
-                                {"lastSeen", ss.str()}}}};
+    nlohmann::json payload = {
+        {"status", "ACTIVE"},
+        {"metadata", {{"cloudflareSessionId", cloudflare_session_id_}, {"lastSeen", ss.str()}}}};
 
     std::map<std::string, std::string> headers = {{"X-Car-Api-Key", car_api_key_},
-                                                   {"Content-Type", "application/json"}};
+                                                  {"Content-Type", "application/json"}};
 
     auto response = HttpPost(url, payload, headers);
 
@@ -204,7 +204,7 @@ void CloudflareService::SendHeartbeat() {
         {"metadata", {{"cloudflareSessionId", cloudflare_session_id_}, {"lastSeen", ss.str()}}}};
 
     std::map<std::string, std::string> headers = {{"X-Car-Api-Key", car_api_key_},
-                                                   {"Content-Type", "application/json"}};
+                                                  {"Content-Type", "application/json"}};
 
     HttpPost(url, payload, headers);
 
@@ -315,7 +315,7 @@ std::string CloudflareService::ExtractVideoMid(const std::string &sdp) {
 
 // HTTP Helper methods
 nlohmann::json CloudflareService::HttpPost(const std::string &url, const nlohmann::json &payload,
-                                            const std::map<std::string, std::string> &headers) {
+                                           const std::map<std::string, std::string> &headers) {
     if (!curl_) {
         ERROR_PRINT("CURL not initialized");
         return nlohmann::json();
@@ -365,7 +365,7 @@ nlohmann::json CloudflareService::HttpPost(const std::string &url, const nlohman
 }
 
 nlohmann::json CloudflareService::HttpGet(const std::string &url,
-                                           const std::map<std::string, std::string> &headers) {
+                                          const std::map<std::string, std::string> &headers) {
     if (!curl_) {
         ERROR_PRINT("CURL not initialized");
         return nlohmann::json();
@@ -412,7 +412,7 @@ nlohmann::json CloudflareService::HttpGet(const std::string &url,
 }
 
 nlohmann::json CloudflareService::HttpPut(const std::string &url, const nlohmann::json &payload,
-                                           const std::map<std::string, std::string> &headers) {
+                                          const std::map<std::string, std::string> &headers) {
     if (!curl_) {
         ERROR_PRINT("CURL not initialized");
         return nlohmann::json();

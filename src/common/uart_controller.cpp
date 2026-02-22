@@ -59,37 +59,37 @@ bool UartController::ConfigurePort() {
     // Set baud rate (support common rates)
     speed_t speed;
     switch (baud_rate_) {
-    case 9600:
-        speed = B9600;
-        break;
-    case 19200:
-        speed = B19200;
-        break;
-    case 38400:
-        speed = B38400;
-        break;
-    case 57600:
-        speed = B57600;
-        break;
-    case 115200:
-        speed = B115200;
-        break;
-    case 230400:
-        speed = B230400;
-        break;
-    default:
-        ERROR_PRINT("Unsupported baud rate: %d", baud_rate_);
-        return false;
+        case 9600:
+            speed = B9600;
+            break;
+        case 19200:
+            speed = B19200;
+            break;
+        case 38400:
+            speed = B38400;
+            break;
+        case 57600:
+            speed = B57600;
+            break;
+        case 115200:
+            speed = B115200;
+            break;
+        case 230400:
+            speed = B230400;
+            break;
+        default:
+            ERROR_PRINT("Unsupported baud rate: %d", baud_rate_);
+            return false;
     }
 
     cfsetospeed(&tty, speed);
     cfsetispeed(&tty, speed);
 
     // 8N1 mode
-    tty.c_cflag &= ~PARENB;        // No parity
-    tty.c_cflag &= ~CSTOPB;        // 1 stop bit
+    tty.c_cflag &= ~PARENB; // No parity
+    tty.c_cflag &= ~CSTOPB; // 1 stop bit
     tty.c_cflag &= ~CSIZE;
-    tty.c_cflag |= CS8;            // 8 data bits
+    tty.c_cflag |= CS8; // 8 data bits
 
     tty.c_cflag &= ~CRTSCTS;       // No hardware flow control
     tty.c_cflag |= CREAD | CLOCAL; // Enable receiver

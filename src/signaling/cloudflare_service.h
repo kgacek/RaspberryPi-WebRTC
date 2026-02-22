@@ -10,9 +10,8 @@
 class CloudflareService : public SignalingService,
                           public std::enable_shared_from_this<CloudflareService> {
   public:
-    static std::shared_ptr<CloudflareService> Create(Args args,
-                                                      std::shared_ptr<Conductor> conductor,
-                                                      boost::asio::io_context &ioc);
+    static std::shared_ptr<CloudflareService>
+    Create(Args args, std::shared_ptr<Conductor> conductor, boost::asio::io_context &ioc);
 
     CloudflareService(Args args, std::shared_ptr<Conductor> conductor,
                       boost::asio::io_context &ioc);
@@ -35,7 +34,7 @@ class CloudflareService : public SignalingService,
 
     // Active session management
     void OnActiveSessionDetected(const std::string &session_id,
-                                  const std::string &control_session_id);
+                                 const std::string &control_session_id);
     void OnSessionEnded();
     void SubscribeToControlDataChannel(const std::string &control_session_id);
 

@@ -46,7 +46,6 @@ jobs:
           libpulse-dev \
           libasound2-dev \
           libjpeg-dev \
-          libcamera-dev \
           libmosquitto-dev \
           libcurl4-openssl-dev \
           protobuf-compiler \
@@ -60,7 +59,7 @@ jobs:
     - name: Build project
       run: |
         mkdir build && cd build
-        cmake .. -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        cmake .. -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DUSE_LIBCAMERA_CAPTURE=OFF
         make -j$(nproc)
 
     - name: Zip binary

@@ -46,8 +46,10 @@ jobs:
       - name: Install dependencies
         run: |
           docker run --name rpi-container -v ${{ github.workspace }}:/app rpi-docker-image /usr/bin/bash -c "
+            export DEBIAN_FRONTEND=noninteractive &&
+            export DEBCONF_NONINTERACTIVE_SEEN=true &&
             apt update --fix-missing &&
-            apt install -y \
+            apt install -y --no-install-recommends \
               wget \
               curl \
               cmake \
@@ -68,7 +70,7 @@ jobs:
               libmosquitto-dev \
               libcurl4-openssl-dev \
               protobuf-compiler \
-              libprotobuf-dev &&
+              libprotobuf-dev || true &&
             cd /app &&
             wget -q https://github.com/TzuHuanTai/Native-WebRTC-Build/releases/download/5790/libwebrtc-arm64.tar.gz &&
             tar -xzf libwebrtc-arm64.tar.gz &&

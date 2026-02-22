@@ -9,6 +9,7 @@ on:
       - '.github/**'
       - '.vscode/**'
       - '*.md'
+  workflow_dispatch:
 
 jobs:
   build:

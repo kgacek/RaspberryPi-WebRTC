@@ -16,7 +16,7 @@ class CloudflareService : public SignalingService,
     CloudflareService(Args args, std::shared_ptr<Conductor> conductor,
                       boost::asio::io_context &ioc);
 
-    ~CloudflareService() override;
+    ~CloudflareService();
 
   protected:
     void Connect() override;

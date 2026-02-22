@@ -63,17 +63,18 @@ void CloudflareService::Connect() {
 
     // 3. Create video peer
     PeerConfig config;
-    config.uid = args_.uid;
-    config.on_local_sdp = [this](const std::string &peer_id, const std::string &sdp,
-                                 const std::string &type) {
-        OnLocalSdp(peer_id, sdp, type);
-    };
+    config.has_candidates_in_sdp = false;
 
     auto peer = CreatePeer(config);
     if (!peer) {
         ERROR_PRINT("Failed to create peer");
         return;
     }
+
+    peer->OnLocalSdp([this](const std::string &peer_id, const std::string &sdp,
+                            const std::string &type) {
+        OnLocalSdp(peer_id, sdp, type);
+    });
 
     INFO_PRINT("Video peer created: %s", peer->id().c_str());
 

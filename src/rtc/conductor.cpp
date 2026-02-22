@@ -358,12 +358,12 @@ void Conductor::ControlCamera(std::shared_ptr<RtcChannel> datachannel,
 }
 
 void Conductor::ControlCar(std::shared_ptr<RtcChannel> datachannel, const protocol::Packet &pkt) {
-    if (!pkt.has_car_control_command()) {
+    if (!pkt.has_control_car_request()) {
         ERROR_PRINT("Invalid car control command");
         return;
     }
 
-    const auto &cmd = pkt.car_control_command();
+    const auto &cmd = pkt.control_car_request();
     int throttle = cmd.throttle();
     int steer = cmd.steer();
 

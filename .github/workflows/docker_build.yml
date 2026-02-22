@@ -96,6 +96,28 @@ jobs:
           key: rpi-docker-env-${{ runner.os }}-${{ hashFiles('**/Dockerfile', '.github/workflows/**') }}
           restore-keys: |
             rpi-docker-env-${{ runner.os }}-
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and Push RaspiOS Dev Image
+        run: |
+          IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/raspberrypi-webrtc-dev:${{ needs.prepare-env.outputs.raspios_version }}
+          IMAGE_LATEST=ghcr.io/${{ github.repository_owner }}/raspberrypi-webrtc-dev:latest
+          
+          docker tag rpi-docker-env $IMAGE_NAME
+          docker tag rpi-docker-env $IMAGE_LATEST
+          
+          docker push $IMAGE_NAME
+          docker push $IMAGE_LATEST
+          
+          echo "✅ Published development image:"
+          echo "   $IMAGE_NAME"
+          echo "   $IMAGE_LATEST"
   
   build:
     runs-on: ubuntu-24.04-arm

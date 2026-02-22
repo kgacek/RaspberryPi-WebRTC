@@ -47,7 +47,7 @@ CloudflareService::~CloudflareService() {
 void CloudflareService::Connect() {
     INFO_PRINT("Connecting CloudflareService...");
 
-    // 1. Create Cloudflare session
+    // 1. Create Cloudflare session (empty POST request)
     cloudflare_session_id_ = CreateCloudflareSession();
     if (cloudflare_session_id_.empty()) {
         ERROR_PRINT("Failed to create Cloudflare session");
@@ -61,7 +61,7 @@ void CloudflareService::Connect() {
         WARN_PRINT("Failed to register with backend");
     }
 
-    // 3. Create video peer
+    // 3. Create video peer (will publish tracks in OnLocalSdp callback)
     PeerConfig config;
     config.has_candidates_in_sdp = false;
 
@@ -71,10 +71,10 @@ void CloudflareService::Connect() {
         return;
     }
 
-    peer->OnLocalSdp([this](const std::string &peer_id, const std::string &sdp,
-                            const std::string &type) {
-        OnLocalSdp(peer_id, sdp, type);
-    });
+    peer->OnLocalSdp(
+        [this](const std::string &peer_id, const std::string &sdp, const std::string &type) {
+            OnLocalSdp(peer_id, sdp, type);
+        });
 
     INFO_PRINT("Video peer created: %s", peer->id().c_str());
 
@@ -103,15 +103,55 @@ void CloudflareService::Disconnect() {
 std::string CloudflareService::CreateCloudflareSession() {
     std::string url = "https://rtc.live.cloudflare.com/v1/apps/" + cf_app_id_ + "/sessions/new";
 
-    nlohmann::json payload = nlohmann::json::object();
+    if (!curl_) {
+        ERROR_PRINT("CURL not initialized");
+        return "";
+    }
 
-    std::map<std::string, std::string> headers = {{"Authorization", "Bearer " + cf_token_},
-                                                  {"Content-Type", "application/json"}};
+    curl_easy_reset(curl_);
 
-    auto response = HttpPost(url, payload, headers);
+    std::string response_string;
 
-    if (response.contains("sessionId")) {
-        return response["sessionId"].get<std::string>();
+    std::map<std::string, std::string> headers = {{"Authorization", "Bearer " + cf_token_}};
+
+    curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl_, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl_, CURLOPT_POSTFIELDSIZE, 0L); // Empty body
+    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &response_string);
+
+    // Set headers
+    struct curl_slist *header_list = nullptr;
+    for (const auto &[key, value] : headers) {
+        std::string header = key + ": " + value;
+        header_list = curl_slist_append(header_list, header.c_str());
+    }
+    curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, header_list);
+
+    CURLcode res = curl_easy_perform(curl_);
+    curl_slist_free_all(header_list);
+
+    if (res != CURLE_OK) {
+        ERROR_PRINT("CURL POST failed: %s", curl_easy_strerror(res));
+        return "";
+    }
+
+    long http_code = 0;
+    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
+
+    if (http_code != 200 && http_code != 201) {
+        WARN_PRINT("HTTP POST returned code %ld for URL: %s", http_code, url.c_str());
+        WARN_PRINT("Response: %s", response_string.c_str());
+        return "";
+    }
+
+    try {
+        auto response = nlohmann::json::parse(response_string);
+        if (response.contains("sessionId")) {
+            return response["sessionId"].get<std::string>();
+        }
+    } catch (const std::exception &e) {
+        ERROR_PRINT("Failed to parse JSON response: %s", e.what());
     }
 
     ERROR_PRINT("Failed to create Cloudflare session");
@@ -124,12 +164,12 @@ void CloudflareService::OnLocalSdp(const std::string &peer_id, const std::string
         return;
     }
 
-    INFO_PRINT("Received local SDP offer, publishing to Cloudflare");
+    INFO_PRINT("Received local SDP offer, publishing track to Cloudflare");
 
     // Extract video mid from SDP
     std::string video_mid = ExtractVideoMid(sdp);
 
-    // Publish track to Cloudflare
+    // Publish track to existing Cloudflare session
     std::string url = "https://rtc.live.cloudflare.com/v1/apps/" + cf_app_id_ + "/sessions/" +
                       cloudflare_session_id_ + "/tracks/new";
 
@@ -162,7 +202,7 @@ void CloudflareService::OnLocalSdp(const std::string &peer_id, const std::string
             INFO_PRINT("");
         }
     } else {
-        ERROR_PRINT("No session description in response");
+        ERROR_PRINT("No sessionDescription in response");
     }
 }
 

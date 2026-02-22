@@ -78,6 +78,10 @@ void CloudflareService::Connect() {
 
     INFO_PRINT("Video peer created: %s", peer->id().c_str());
 
+    // Trigger SDP offer generation (critical for Cloudflare Calls!)
+    peer->CreateOffer();
+    INFO_PRINT("SDP offer generation triggered");
+
     // 4. Start periodic tasks
     SendHeartbeat();
     CheckActiveSession();

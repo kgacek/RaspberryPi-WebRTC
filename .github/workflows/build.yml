@@ -37,6 +37,8 @@ jobs:
         sudo apt install -y \
           mosquitto-dev \
           libboost-program-options-dev \
+          libboost-system-dev \
+          libboost-thread-dev \
           libavformat-dev \
           libavcodec-dev \
           libavutil-dev \
@@ -46,6 +48,7 @@ jobs:
           libjpeg-dev \
           libcamera-dev \
           libmosquitto-dev \
+          libcurl4-openssl-dev \
           protobuf-compiler \
           libprotobuf-dev
 

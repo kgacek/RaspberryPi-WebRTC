@@ -26,11 +26,14 @@ if(NOT DEFINED PLATFORM)
         set(PLATFORM "jetson")
     elseif(EXISTS "/usr/bin/raspi-config")
         set(PLATFORM "raspberrypi")
+    else()
+        # Default to raspberrypi for GitHub Actions on ubuntu-24.04-arm
+        set(PLATFORM "raspberrypi")
     endif()
 endif()
 message(STATUS "Target platform: ${PLATFORM}")
 
-if(${PLATFORM} STREQUAL "jetson")
+if("${PLATFORM}" STREQUAL "jetson")
     set(JETSON_PLATFORM ON)
     set(USE_LIBARGUS_CAPTURE ON)
     set(USE_JETSON_HW_ENCODER ON)
@@ -39,15 +42,20 @@ if(${PLATFORM} STREQUAL "jetson")
         -DUSE_LIBARGUS_CAPTURE
         -DUSE_JETSON_HW_ENCODER
     )
-elseif(${PLATFORM} STREQUAL "raspberrypi")
+elseif("${PLATFORM}" STREQUAL "raspberrypi")
     set(RPI_PLATFORM ON)
-    set(USE_LIBCAMERA_CAPTURE ON)
+    # Allow override of USE_LIBCAMERA_CAPTURE via command line
+    if(NOT DEFINED USE_LIBCAMERA_CAPTURE)
+        set(USE_LIBCAMERA_CAPTURE ON)
+    endif()
     set(USE_RPI_HW_ENCODER ON)
     add_definitions(
         -DRPI_PLATFORM
-        -DUSE_LIBCAMERA_CAPTURE
         -DUSE_RPI_HW_ENCODER
     )
+    if(USE_LIBCAMERA_CAPTURE)
+        add_definitions(-DUSE_LIBCAMERA_CAPTURE)
+    endif()
 else()
     message(FATAL_ERROR "Unknown PLATFORM: ${PLATFORM}")
 endif()

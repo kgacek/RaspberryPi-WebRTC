@@ -22,7 +22,6 @@ endif()
 # path of the proto files
 set(PROTO_SRC_DIRS
   "${CMAKE_SOURCE_DIR}/external/livekit-protocol/protobufs"
-  "${CMAKE_SOURCE_DIR}/external/protocol/protos"
   "${CMAKE_SOURCE_DIR}/protos"
 )
 set(PROTO_OUT_DIR "${CMAKE_SOURCE_DIR}/proto")

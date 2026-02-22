@@ -1,0 +1,54 @@
+# Build artifacts
+build/
+build-*/
+*.o
+*.a
+*.so
+*.dylib
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Generated files
+proto/
+*.pb.cc
+*.pb.h
+
+# Git
+.git/
+.gitignore
+.gitmodules
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+doc/*.jpg
+doc/*.png
+*.md
+!README.md
+
+# Examples
+examples/
+
+# Temporary files
+*.tmp
+*.log
+*.jpg
+*.mp4
+
+# macOS
+.DS_Store
+
+# Docker
+docker/
+Dockerfile*
+.dockerignore

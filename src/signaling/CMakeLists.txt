@@ -5,10 +5,13 @@ if(NOT MOSQUITTO_LIBS)
     message(FATAL_ERROR "Mosquitto library not found")
 endif()
 
+find_package(CURL REQUIRED)
+
 add_library(${PROJECT_NAME}
     mqtt_service.cpp
     http_service.cpp
     websocket_service.cpp
+    cloudflare_service.cpp
 )
 
 # Use boringssl in libwebrtc.a
@@ -16,4 +19,5 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
     rtc
     ${MOSQUITTO_LIBS}
     ${WEBRTC_LIBRARY}
+    CURL::libcurl
 )

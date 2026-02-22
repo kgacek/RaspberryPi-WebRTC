@@ -1,0 +1,84 @@
+# Stage 1: Build libwebrtc.a for ARM64
+# This is a HEAVY build (10-16 hours) - build once and cache forever
+# Tag this image as: webrtc-base:m115
+
+FROM --platform=linux/arm64 debian:bookworm-slim
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    python3 \
+    python3-pip \
+    build-essential \
+    curl \
+    wget \
+    libncurses5 \
+    libx11-dev \
+    lsb-release \
+    sudo \
+    rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create build directory
+WORKDIR /build
+
+# Install depot_tools
+RUN git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git && \
+    echo 'export PATH="/build/depot_tools:${PATH}"' >> ~/.bashrc
+
+ENV PATH="/build/depot_tools:${PATH}"
+
+# Fetch WebRTC source code (this takes ~30-45 minutes and downloads ~10GB)
+RUN mkdir webrtc-checkout && \
+    cd webrtc-checkout && \
+    fetch --nohooks webrtc
+
+# Install ARM64 sysroot and sync dependencies
+WORKDIR /build/webrtc-checkout/src
+RUN ./build/linux/sysroot_scripts/install-sysroot.py --arch=arm64 && \
+    gclient sync -D
+
+# Checkout M115 (stable branch-heads/5790)
+RUN git checkout -b local-5790 branch-heads/5790 && \
+    git gc --aggressive && \
+    gclient sync -D --force --reset --with_branch_heads --no-history
+
+# Generate build configuration
+RUN gn gen out/Release64 --args='target_os="linux" \
+    target_cpu="arm64" \
+    is_debug=false \
+    rtc_include_tests=false \
+    rtc_use_x11=false \
+    rtc_use_h264=true \
+    rtc_use_pipewire=false \
+    use_rtti=true \
+    use_glib=false \
+    use_custom_libcxx=false \
+    rtc_build_tools=false \
+    rtc_build_examples=false \
+    is_component_build=false \
+    is_component_ffmpeg=true \
+    ffmpeg_branding="Chrome" \
+    proprietary_codecs=true \
+    clang_use_chrome_plugins=false'
+
+# Build libwebrtc.a (this takes 4-8 hours depending on host CPU)
+# Use -j2 to reduce memory pressure during emulation
+RUN ninja -C out/Release64 -j2
+
+# Extract header files
+RUN rsync -amv --include='*/' --include='*.h' --include='*.hpp' --exclude='*' ./ ./webrtc-headers
+
+# Create output directory structure that matches /usr/local
+RUN mkdir -p /output/lib /output/include && \
+    cp out/Release64/obj/libwebrtc.a /output/lib/ && \
+    cp -r webrtc-headers/* /output/include/
+
+# Verify the library was built
+RUN ls -lh /output/lib/libwebrtc.a && \
+    echo "libwebrtc.a size: $(du -h /output/lib/libwebrtc.a | cut -f1)"
+
+WORKDIR /output
+
+# Default command: show build info
+CMD ["sh", "-c", "echo 'WebRTC base image built successfully' && ls -lh /output/lib/ && du -sh /output/include/"]

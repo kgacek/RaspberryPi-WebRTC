@@ -1,0 +1,115 @@
+# Stage 1: Build ArcadeRally application using pre-built libwebrtc.a
+# This approach downloads pre-built binaries instead of building from source (5 min vs 12h!)
+# Using Ubuntu 24.04 to get newer libcamera version (same approach as original GitHub workflow)
+FROM --platform=linux/arm64 ubuntu:24.04 AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    cmake \
+    clang \
+    pkg-config \
+    wget \
+    curl \
+    ca-certificates \
+    build-essential \
+    libboost-program-options-dev \
+    libboost-system-dev \
+    libboost-thread-dev \
+    libmosquitto-dev \
+    libavformat-dev \
+    libavcodec-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libpulse-dev \
+    libasound2-dev \
+    libjpeg-dev \
+    libcamera-dev \
+    protobuf-compiler \
+    libprotobuf-dev \
+    nlohmann-json3-dev \
+    libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install pre-built libwebrtc.a from Native-WebRTC-Build
+# Using 5790 (M115 - same as GitHub Actions workflow) - fully compatible with RaspberryPi-WebRTC
+WORKDIR /tmp
+RUN wget -q https://github.com/TzuHuanTai/Native-WebRTC-Build/releases/download/5790/libwebrtc-arm64.tar.gz && \
+    tar -xzf libwebrtc-arm64.tar.gz && \
+    mkdir -p /usr/local/lib /usr/local/include/webrtc /usr/local/include/nlohmann && \
+    cp -r lib/* /usr/local/lib/ && \
+    cp -r include/* /usr/local/include/webrtc/ && \
+    rm -rf /tmp/* && \
+    wget -q https://raw.githubusercontent.com/nlohmann/json/v3.11.3/single_include/nlohmann/json.hpp -O /usr/local/include/nlohmann/json.hpp
+
+# Verify libwebrtc.a was installed
+RUN ls -lh /usr/local/lib/libwebrtc.a && \
+    echo "libwebrtc.a size: $(du -h /usr/local/lib/libwebrtc.a | cut -f1)"
+
+# Set working directory for app build
+WORKDIR /app
+
+# Copy CMakeLists.txt first (better cache)
+COPY CMakeLists.txt /app/
+
+# Copy external dependencies
+COPY external/ /app/external/
+
+# Copy source code
+COPY src/ /app/src/
+
+# Copy test files (optional)
+COPY test/ /app/test/
+
+# Create build directory and configure
+RUN mkdir -p build && \
+    cd build && \
+    cmake .. \
+        -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DPLATFORM=raspberrypi
+
+# Build the application
+RUN cd build && make -j$(nproc)
+
+# Verify binary was created
+RUN ls -lh /app/build/pi-webrtc && \
+    file /app/build/pi-webrtc
+
+# Stage 2: Runtime image (minimal size)
+FROM --platform=linux/arm64 ubuntu:24.04
+
+# Install only runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libboost-program-options1.83.0 \
+    libboost-system1.83.0 \
+    libboost-thread1.83.0 \
+    libmosquitto1 \
+    libavformat60 \
+    libavcodec60 \
+    libavutil58 \
+    libswscale7 \
+    libpulse0 \
+    libasound2 \
+    libjpeg-turbo8 \
+    libcamera0.3 \
+    libprotobuf32 \
+    libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binary from builder stage
+COPY --from=builder /app/build/pi-webrtc /usr/local/bin/pi-webrtc
+
+# Create directory for config/logs
+RUN mkdir -p /var/log/arcaderally /etc/arcaderally
+
+# Set working directory
+WORKDIR /app
+
+# Expose ports (if needed for monitoring/debugging)
+# EXPOSE 8080
+
+# Default entrypoint
+ENTRYPOINT ["/usr/local/bin/pi-webrtc"]
+
+# Default help command (override with actual params at runtime)
+CMD ["--help"]

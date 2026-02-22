@@ -212,7 +212,25 @@ void Parser::ParseArgs(int argc, char *argv[], Args &args) {
         ("ws-room", bpo::value<std::string>(&args.ws_room)->default_value(args.ws_room),
             "The room name to join on the SFU server.")
         ("ws-key", bpo::value<std::string>(&args.ws_key)->default_value(args.ws_key),
-            "The API key used to authenticate with the SFU server.");
+            "The API key used to authenticate with the SFU server.")
+        ("use-cloudflare", bpo::bool_switch(&args.use_cloudflare)->default_value(args.use_cloudflare),
+            "Use Cloudflare Calls for signaling and WebRTC relay.")
+        ("cf-app-id", bpo::value<std::string>(&args.cf_app_id)->default_value(args.cf_app_id),
+            "Cloudflare Realtime App ID.")
+        ("cf-token", bpo::value<std::string>(&args.cf_token)->default_value(args.cf_token),
+            "Cloudflare Realtime Token.")
+        ("arcaderally-api", bpo::value<std::string>(&args.arcaderally_api)->default_value(args.arcaderally_api),
+            "ArcadeRally backend API URL.")
+        ("car-id", bpo::value<std::string>(&args.car_id)->default_value(args.car_id),
+            "Car ID from ArcadeRally backend.")
+        ("car-api-key", bpo::value<std::string>(&args.car_api_key)->default_value(args.car_api_key),
+            "Car API key (car_xxx...).")
+        ("enable-uart-control", bpo::bool_switch(&args.enable_uart_control)->default_value(args.enable_uart_control),
+            "Enable UART control communication for RC car.")
+        ("uart-device", bpo::value<std::string>(&args.uart_device)->default_value(args.uart_device),
+            "UART device path (e.g., /dev/ttyS0).")
+        ("uart-baud", bpo::value<int>(&args.uart_baud)->default_value(args.uart_baud),
+            "UART baud rate.");
     // clang-format on
 
     bpo::variables_map vm;

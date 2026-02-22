@@ -13,6 +13,7 @@
 #include "args.h"
 #include "capturer/pa_capturer.h"
 #include "capturer/video_capturer.h"
+#include "common/uart_controller.h"
 #include "rtc/rtc_peer.h"
 #include "track/scale_track_source.h"
 
@@ -46,6 +47,7 @@ class Conductor {
     void QueryFile(std::shared_ptr<RtcChannel> datachannel, const protocol::Packet &pkt);
     void TransferFile(std::shared_ptr<RtcChannel> datachannel, const protocol::Packet &pkt);
     void ControlCamera(std::shared_ptr<RtcChannel> datachannel, const protocol::Packet &pkt);
+    void ControlCar(std::shared_ptr<RtcChannel> datachannel, const protocol::Packet &pkt);
     void SendFileResponse(std::shared_ptr<RtcChannel> datachannel, const std::string &path);
 
     std::unique_ptr<rtc::Thread> network_thread_;
@@ -60,6 +62,7 @@ class Conductor {
     rtc::scoped_refptr<ScaleTrackSource> video_track_source_;
 
     std::shared_ptr<UnixSocketServer> ipc_server_;
+    std::shared_ptr<UartController> uart_controller_;
 };
 
 #endif // CONDUCTOR_H_

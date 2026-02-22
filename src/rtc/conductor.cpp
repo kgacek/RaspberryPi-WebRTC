@@ -39,6 +39,12 @@ std::shared_ptr<Conductor> Conductor::Create(Args args) {
     ptr->InitializePeerConnectionFactory();
     ptr->InitializeTracks();
     ptr->InitializeIpcServer();
+    
+    // Initialize UART controller if enabled
+    if (args.enable_uart_control) {
+        ptr->uart_controller_ = UartController::Create(args.uart_device, args.uart_baud);
+    }
+    
     return ptr;
 }
 
@@ -48,6 +54,9 @@ Conductor::Conductor(Args args)
 Conductor::~Conductor() {
     if (ipc_server_) {
         ipc_server_->Stop();
+    }
+    if (uart_controller_) {
+        uart_controller_->Stop();
     }
     audio_track_ = nullptr;
     video_track_ = nullptr;
@@ -224,6 +233,11 @@ void Conductor::InitializeCommandChannel(rtc::scoped_refptr<RtcPeer> peer) {
         [this](std::shared_ptr<RtcChannel> datachannel, const protocol::Packet pkt) {
             ControlCamera(datachannel, pkt);
         });
+    cmd_channel->RegisterHandler(
+        protocol::CommandType::CONTROL_CAR,
+        [this](std::shared_ptr<RtcChannel> datachannel, const protocol::Packet pkt) {
+            ControlCar(datachannel, pkt);
+        });
 }
 
 void Conductor::TakeSnapshot(std::shared_ptr<RtcChannel> datachannel, const protocol::Packet &pkt) {
@@ -340,6 +354,29 @@ void Conductor::ControlCamera(std::shared_ptr<RtcChannel> datachannel,
         }
     } catch (const std::exception &e) {
         ERROR_PRINT("%s", e.what());
+    }
+}
+
+void Conductor::ControlCar(std::shared_ptr<RtcChannel> datachannel, const protocol::Packet &pkt) {
+    if (!pkt.has_car_control_command()) {
+        ERROR_PRINT("Invalid car control command");
+        return;
+    }
+
+    const auto &cmd = pkt.car_control_command();
+    int throttle = cmd.throttle();
+    int steer = cmd.steer();
+
+    // Clamp values to safe ranges
+    throttle = std::clamp(throttle, -500, 500);
+    steer = std::clamp(steer, -1000, 1000);
+
+    DEBUG_PRINT("Car control: throttle=%d, steer=%d", throttle, steer);
+
+    if (uart_controller_ && uart_controller_->IsConnected()) {
+        uart_controller_->SendCommand(throttle, steer);
+    } else {
+        WARN_PRINT("UART controller not available or not connected");
     }
 }
 

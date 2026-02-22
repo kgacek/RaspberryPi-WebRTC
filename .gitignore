@@ -14,4 +14,9 @@ Makefile
 build
 proto
 
+# docker
+.env
+*.tar.gz
+pi-webrtc
+
 !/doc/*.jpg

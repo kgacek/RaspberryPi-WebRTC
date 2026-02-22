@@ -9,6 +9,7 @@ set(COMMON_FILES
     ${PROJECT_SOURCE_DIR}/utils.cpp
     ${PROJECT_SOURCE_DIR}/v4l2_utils.cpp
     ${PROJECT_SOURCE_DIR}//worker.cpp
+    ${PROJECT_SOURCE_DIR}/uart_controller.cpp
 )
 
 if(JETSON_PLATFORM)

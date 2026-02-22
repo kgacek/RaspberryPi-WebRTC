@@ -4,6 +4,7 @@
 #include "parser.h"
 #include "recorder/recorder_manager.h"
 #include "rtc/conductor.h"
+#include "signaling/cloudflare_service.h"
 #include "signaling/http_service.h"
 #include "signaling/mqtt_service.h"
 #include "signaling/websocket_service.h"
@@ -38,6 +39,10 @@ int main(int argc, char *argv[]) {
 
     if (args.use_mqtt) {
         services.push_back(MqttService::Create(args, conductor));
+    }
+
+    if (args.use_cloudflare) {
+        services.push_back(CloudflareService::Create(args, conductor, ioc));
     }
 
     if (services.empty()) {

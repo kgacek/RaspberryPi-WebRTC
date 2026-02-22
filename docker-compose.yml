@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # ArcadeRally car client for Raspberry Pi
+  arcaderally-car:
+    image: arcaderally-rpi:latest
+    container_name: arcaderally-car
+    restart: unless-stopped
+    
+    # Required: Access to camera and UART devices
+    devices:
+      - /dev/video0:/dev/video0      # Camera
+      - /dev/ttyS0:/dev/ttyS0        # UART for ESP32
+    
+    # Privileged mode for hardware access (alternative to specific devices)
+    # privileged: true
+    
+    # Environment variables (override in .env file)
+    environment:
+      # Cloudflare Calls credentials
+      - CF_REALTIME_APP_ID=${CF_REALTIME_APP_ID}
+      - CF_REALTIME_TOKEN=${CF_REALTIME_TOKEN}
+      
+      # ArcadeRally backend
+      - ARCADERALLY_API=${ARCADERALLY_API:-http://host.docker.internal:3000/api}
+      - CAR_ID=${CAR_ID}
+      - CAR_API_KEY=${CAR_API_KEY}
+      
+      # Optional: Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    
+    # Command line arguments
+    command: >
+      --camera=libcamera:0
+      --fps=25
+      --width=1280
+      --height=720
+      --hw-accel
+      --use-cloudflare
+      --cf-app-id=${CF_REALTIME_APP_ID}
+      --cf-token=${CF_REALTIME_TOKEN}
+      --arcaderally-api=${ARCADERALLY_API:-http://host.docker.internal:3000/api}
+      --car-id=${CAR_ID}
+      --car-api-key=${CAR_API_KEY}
+      --enable-uart-control
+      --uart-device=/dev/ttyS0
+      --uart-baud=115200
+      --uid=arcaderally-car-docker
+      --no-audio
+    
+    # Optional: Expose ports for debugging
+    # ports:
+    #   - "8080:8080"
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Network mode (bridge is default, host gives direct network access)
+    # network_mode: bridge
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "pi-webrtc"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Local development backend (remove in production)
+  # arcaderally-backend:
+  #   image: arcaderally-backend:latest
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - DATABASE_URL=...
+  #     - CLOUDFLARE_ACCOUNT_ID=...
+
+# Optional: Named volumes for persistence
+# volumes:
+#   car-logs:
+
+# Optional: Custom network
+# networks:
+#   arcaderally:
+#     driver: bridge

@@ -150,6 +150,21 @@ struct Args {
     std::string ws_host = "";
     std::string ws_room = "";
     std::string ws_key = "";
+
+    // cloudflare signaling
+    bool use_cloudflare = false;
+    std::string cf_app_id = "";
+    std::string cf_token = "";
+
+    // arcaderally backend
+    std::string arcaderally_api = "http://localhost:3000/api";
+    std::string car_id = "";
+    std::string car_api_key = "";
+
+    // uart control
+    bool enable_uart_control = false;
+    std::string uart_device = "/dev/ttyS0";
+    int uart_baud = 115200;
 };
 
 #endif // ARGS_H_

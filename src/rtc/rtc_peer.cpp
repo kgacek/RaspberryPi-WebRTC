@@ -24,11 +24,23 @@ RtcPeer::~RtcPeer() {
 }
 
 void RtcPeer::CreateOffer() {
+    DEBUG_PRINT("[PEER] CreateOffer() entered for peer id=%s", id_.c_str());
+    
+    DEBUG_PRINT("[PEER] Checking peer_connection_ pointer: %p", peer_connection_.get());
+    if (!peer_connection_) {
+        ERROR_PRINT("[PEER] peer_connection_ is null!");
+        return;
+    }
+    
+    DEBUG_PRINT("[PEER] Current signaling_state_: %d", (int)signaling_state_);
     if (signaling_state_ == webrtc::PeerConnectionInterface::SignalingState::kHaveLocalOffer) {
+        DEBUG_PRINT("[PEER] Already have local offer, skipping");
         return;
     }
 
+    DEBUG_PRINT("[PEER] Calling peer_connection_->CreateOffer()");
     peer_connection_->CreateOffer(this, webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
+    DEBUG_PRINT("[PEER] peer_connection_->CreateOffer() returned");
 }
 
 void RtcPeer::Terminate() {
@@ -232,14 +244,21 @@ void RtcPeer::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transc
 }
 
 void RtcPeer::OnSuccess(webrtc::SessionDescriptionInterface *desc) {
+    DEBUG_PRINT("[PEER] OnSuccess callback entered, peer_id=%s", id_.c_str());
+    DEBUG_PRINT("[PEER] desc pointer: %p", desc);
+    
     std::string sdp;
+    DEBUG_PRINT("[PEER] Calling desc->ToString()");
     desc->ToString(&sdp);
+    DEBUG_PRINT("[PEER] desc->ToString() returned, sdp length=%zu", sdp.length());
 
     /* An in-bound DataChannel created by the server side will not connect if the SDP is set to
      * passive. */
     // modified_sdp_ = ModifySetupAttribute(sdp, "passive");
     modified_sdp_ = sdp;
+    DEBUG_PRINT("[PEER] modified_sdp_ assigned");
 
+    DEBUG_PRINT("[PEER] Creating session description...");
     modified_desc_ =
         webrtc::CreateSessionDescription(desc->GetType(), modified_sdp_, modified_desc_error_);
     if (!modified_desc_) {
@@ -247,30 +266,43 @@ void RtcPeer::OnSuccess(webrtc::SessionDescriptionInterface *desc) {
                     modified_desc_error_->description.c_str());
         return;
     }
+    DEBUG_PRINT("[PEER] Session description created successfully");
 
+    DEBUG_PRINT("[PEER] Calling SetLocalDescription...");
     peer_connection_->SetLocalDescription(SetSessionDescription::Create(nullptr, nullptr).get(),
                                           modified_desc_.get());
+    DEBUG_PRINT("[PEER] SetLocalDescription returned");
 
     if (has_candidates_in_sdp_) {
+        DEBUG_PRINT("[PEER] Emitting local SDP with 1 sec delay");
         EmitLocalSdp(1);
     } else {
+        DEBUG_PRINT("[PEER] Emitting local SDP immediately");
         EmitLocalSdp();
     }
+    DEBUG_PRINT("[PEER] OnSuccess completed");
 }
 
 void RtcPeer::EmitLocalSdp(int delay_sec) {
+    DEBUG_PRINT("[PEER] EmitLocalSdp called, delay_sec=%d", delay_sec);
     if (!on_local_sdp_fn_) {
+        DEBUG_PRINT("[PEER] No on_local_sdp_fn_, returning");
         return;
     }
+    DEBUG_PRINT("[PEER] on_local_sdp_fn_ is set, will emit SDP");
 
     if (sent_sdp_timeout_.joinable()) {
         sent_sdp_timeout_.join();
     }
 
     auto send_sdp = [this]() {
+        DEBUG_PRINT("[PEER] send_sdp lambda executing");
         std::string type = webrtc::SdpTypeToString(modified_desc_->GetType());
+        DEBUG_PRINT("[PEER] SDP type: %s", type.c_str());
         modified_desc_->ToString(&modified_sdp_);
+        DEBUG_PRINT("[PEER] Calling on_local_sdp_fn_ callback");
         on_local_sdp_fn_(id_, modified_sdp_, type);
+        DEBUG_PRINT("[PEER] on_local_sdp_fn_ returned, clearing callback");
         on_local_sdp_fn_ = nullptr;
     };
 

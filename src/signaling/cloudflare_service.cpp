@@ -85,13 +85,23 @@ void CloudflareService::Connect() {
         ioc_, std::chrono::milliseconds(100));
     
     offer_timer->async_wait([self, peer = video_peer_, offer_timer](const boost::system::error_code &ec) {
+        DEBUG_PRINT("[CLOUDFLARE] Timer callback started, ec=%d", ec.value());
         if (!ec) {
+            DEBUG_PRINT("[CLOUDFLARE] Timer no error, checking service lock");
             if (auto service = self.lock()) {
+                DEBUG_PRINT("[CLOUDFLARE] Service locked successfully");
                 if (peer) {
+                    DEBUG_PRINT("[CLOUDFLARE] Peer is valid, calling CreateOffer()");
                     peer->CreateOffer();
-                    INFO_PRINT("SDP offer generation triggered");
+                    INFO_PRINT("[CLOUDFLARE] CreateOffer() returned successfully");
+                } else {
+                    ERROR_PRINT("[CLOUDFLARE] Peer is null!");
                 }
+            } else {
+                ERROR_PRINT("[CLOUDFLARE] Service already destroyed!");
             }
+        } else {
+            ERROR_PRINT("[CLOUDFLARE] Timer error: %s", ec.message().c_str());
         }
     });
 
@@ -181,14 +191,20 @@ std::string CloudflareService::CreateCloudflareSession() {
 
 void CloudflareService::OnLocalSdp(const std::string &peer_id, const std::string &sdp,
                                    const std::string &type) {
+    DEBUG_PRINT("[CLOUDFLARE] OnLocalSdp called, peer_id=%s, type=%s, sdp_length=%zu", 
+                peer_id.c_str(), type.c_str(), sdp.length());
+    
     if (type != "offer") {
+        DEBUG_PRINT("[CLOUDFLARE] Not an offer, ignoring");
         return;
     }
 
     INFO_PRINT("Received local SDP offer, publishing track to Cloudflare");
 
     // Extract video mid from SDP
+    DEBUG_PRINT("[CLOUDFLARE] Extracting video mid from SDP");
     std::string video_mid = ExtractVideoMid(sdp);
+    DEBUG_PRINT("[CLOUDFLARE] Extracted video_mid: %s", video_mid.c_str());
 
     // Publish track to existing Cloudflare session
     std::string url = "https://rtc.live.cloudflare.com/v1/apps/" + cf_app_id_ + "/sessions/" +

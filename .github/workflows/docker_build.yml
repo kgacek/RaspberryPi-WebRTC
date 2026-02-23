@@ -22,8 +22,10 @@ jobs:
         id: os_version
         run: |
           FILE_URL=$(curl -sI https://downloads.raspberrypi.org/raspios_lite_arm64_latest | grep -i '^location:' | awk '{print $2}' | tr -d '\r')
-          FILENAME=$(basename $FILE_URL)
-          OS_NAME=$(echo $FILENAME | grep -oP 'raspios-[a-z]+-arm64')
+          FILENAME=$(basename "$FILE_URL")
+          # Extract raspios-XXX-arm64 pattern (e.g. raspios-bookworm-arm64)
+          OS_NAME=$(echo "$FILENAME" | grep -oE 'raspios-[a-z]+-arm64' || echo "raspios-bookworm-arm64")
+          echo "Detected OS version: $OS_NAME"
           echo "name=$OS_NAME" >> $GITHUB_OUTPUT
 
       - name: Download and Prepare Raspberry Pi OS Image
@@ -106,14 +108,24 @@ jobs:
 
       - name: Tag and Push RaspiOS Dev Image
         run: |
-          IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/raspberrypi-webrtc-dev:${{ needs.prepare-env.outputs.raspios_version }}
-          IMAGE_LATEST=ghcr.io/${{ github.repository_owner }}/raspberrypi-webrtc-dev:latest
+          RASPIOS_VERSION="${{ needs.prepare-env.outputs.raspios_version }}"
+          if [ -z "$RASPIOS_VERSION" ]; then
+            echo "Warning: raspios_version is empty, using default"
+            RASPIOS_VERSION="raspios-bookworm-arm64"
+          fi
           
-          docker tag rpi-docker-env $IMAGE_NAME
-          docker tag rpi-docker-env $IMAGE_LATEST
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/raspberrypi-webrtc-dev:${RASPIOS_VERSION}"
+          IMAGE_LATEST="ghcr.io/${{ github.repository_owner }}/raspberrypi-webrtc-dev:latest"
           
-          docker push $IMAGE_NAME
-          docker push $IMAGE_LATEST
+          echo "Tagging images:"
+          echo "  - $IMAGE_NAME"
+          echo "  - $IMAGE_LATEST"
+          
+          docker tag rpi-docker-env "$IMAGE_NAME"
+          docker tag rpi-docker-env "$IMAGE_LATEST"
+          
+          docker push "$IMAGE_NAME"
+          docker push "$IMAGE_LATEST"
           
           echo "✅ Published development image:"
           echo "   $IMAGE_NAME"
@@ -157,10 +169,15 @@ jobs:
         id: zip-binary
         run: |
           cd build
+          RASPIOS_VERSION="${{ needs.prepare-env.outputs.raspios_version }}"
+          if [ -z "$RASPIOS_VERSION" ]; then
+            RASPIOS_VERSION="raspios-bookworm-arm64"
+          fi
+          
           if [ "${{ matrix.build_type }}" == "Release" ]; then
-            FILENAME="pi-webrtc-${{ github.ref_name }}_${{ needs.prepare-env.outputs.raspios_version }}.tar.gz"
+            FILENAME="pi-webrtc-${{ github.ref_name }}_${RASPIOS_VERSION}.tar.gz"
           else
-            FILENAME="pi-webrtc-${{ github.ref_name }}_${{ needs.prepare-env.outputs.raspios_version }}_debug.tar.gz"
+            FILENAME="pi-webrtc-${{ github.ref_name }}_${RASPIOS_VERSION}_debug.tar.gz"
           fi
           sudo tar -czvf $FILENAME pi-webrtc
           echo "filename=$FILENAME" >> $GITHUB_OUTPUT

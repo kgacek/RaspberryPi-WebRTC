@@ -28,6 +28,7 @@ class Conductor {
     rtc::scoped_refptr<RtcPeer> CreatePeerConnection(PeerConfig peer_config);
     std::shared_ptr<PaCapturer> AudioSource() const;
     std::shared_ptr<VideoCapturer> VideoSource() const;
+    std::shared_ptr<UartController> GetUartController() const { return uart_controller_; }
 
   private:
     Args args;

@@ -7,6 +7,9 @@
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
+// Forward declaration
+class RawChannel;
+
 class CloudflareService : public SignalingService,
                           public std::enable_shared_from_this<CloudflareService> {
   public:
@@ -37,6 +40,7 @@ class CloudflareService : public SignalingService,
                                  const std::string &control_session_id);
     void OnSessionEnded();
     void SubscribeToControlDataChannel(const std::string &control_session_id);
+    void ProcessControlMessage(const std::string &json_message);
 
     // SDP handling
     void OnLocalSdp(const std::string &peer_id, const std::string &sdp, const std::string &type);
@@ -61,6 +65,7 @@ class CloudflareService : public SignalingService,
 
     rtc::scoped_refptr<RtcPeer> video_peer_;
     rtc::scoped_refptr<RtcPeer> control_peer_;
+    std::shared_ptr<RawChannel> control_channel_;
 
     // Config from Args
     std::string cf_app_id_;

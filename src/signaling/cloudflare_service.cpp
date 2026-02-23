@@ -1,7 +1,9 @@
 #include "cloudflare_service.h"
 
 #include "common/logging.h"
+#include "rtc/raw_channel.h"
 
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -78,11 +80,12 @@ void CloudflareService::Connect() {
 
     INFO_PRINT("Video peer created: %s", video_peer_->id().c_str());
 
-    // Trigger SDP offer generation with small delay (gives tracks time to initialize)
+    // Trigger SDP offer generation with delay (gives tracks time to initialize)
+    // Python version waits ~1.5s before negotiation, we use similar delay
     // Use weak_ptr to avoid keeping service alive if it's being destroyed
     auto self = weak_from_this();
     auto offer_timer = std::make_shared<boost::asio::steady_timer>(
-        ioc_, std::chrono::milliseconds(100));
+        ioc_, std::chrono::milliseconds(1500));
     
     offer_timer->async_wait([self, peer = video_peer_, offer_timer](const boost::system::error_code &ec) {
         DEBUG_PRINT("[CLOUDFLARE] Timer callback started, ec=%d", ec.value());
@@ -116,6 +119,10 @@ void CloudflareService::Disconnect() {
     INFO_PRINT("Disconnecting CloudflareService...");
     heartbeat_timer_.cancel();
     active_session_timer_.cancel();
+
+    if (control_channel_) {
+        control_channel_ = nullptr;
+    }
 
     if (video_peer_) {
         video_peer_ = nullptr;
@@ -344,6 +351,11 @@ void CloudflareService::OnSessionEnded() {
         // conductor->StopCar(); // This would need to be implemented
     }
 
+    // Close control channel
+    if (control_channel_) {
+        control_channel_ = nullptr;
+    }
+
     // Close control peer
     if (control_peer_) {
         control_peer_ = nullptr;
@@ -353,15 +365,254 @@ void CloudflareService::OnSessionEnded() {
 void CloudflareService::SubscribeToControlDataChannel(const std::string &control_session_id) {
     INFO_PRINT("Subscribing to control DataChannel: %s", control_session_id.c_str());
 
-    // TODO: Implement control DataChannel subscription
-    // This requires:
-    // 1. Create new Cloudflare session for subscribing
-    // 2. Establish DataChannel transport
-    // 3. Subscribe to remote control DataChannel
-    // 4. Create local peer with negotiated DataChannel
-    // 5. Setup message handler
+    // Step 1: Create new Cloudflare session for subscribing
+    std::string subscriber_session_id = CreateCloudflareSession();
+    if (subscriber_session_id.empty()) {
+        ERROR_PRINT("Failed to create subscriber session");
+        return;
+    }
 
-    WARN_PRINT("Control DataChannel subscription not yet implemented");
+    DEBUG_PRINT("Created subscriber session: %s", subscriber_session_id.c_str());
+
+    // Step 2: Establish DataChannel transport
+    std::string establish_url = "https://rtc.live.cloudflare.com/v1/apps/" + cf_app_id_ +
+                                "/sessions/" + subscriber_session_id + "/datachannels/establish";
+
+    nlohmann::json establish_payload = {
+        {"dataChannel", {{"location", "remote"}, {"dataChannelName", "server-events"}}}};
+
+    std::map<std::string, std::string> headers = {{"Authorization", "Bearer " + cf_token_},
+                                                  {"Content-Type", "application/json"}};
+
+    DEBUG_PRINT("Establishing DataChannel transport...");
+    auto establish_response = HttpPost(establish_url, establish_payload, headers);
+
+    if (establish_response.empty()) {
+        ERROR_PRINT("Failed to establish DataChannel transport");
+        return;
+    }
+
+    // Step 3: Handle SDP renegotiation if required
+    if (establish_response.contains("requiresImmediateRenegotiation") &&
+        establish_response["requiresImmediateRenegotiation"].get<bool>()) {
+
+        DEBUG_PRINT("Renegotiation required, processing SDP offer...");
+
+        // Create control peer for DataChannel subscription
+        PeerConfig config;
+        config.has_candidates_in_sdp = false;
+
+        control_peer_ = CreatePeer(config);
+        if (!control_peer_) {
+            ERROR_PRINT("Failed to create control peer");
+            return;
+        }
+
+        // Setup callback to send answer to Cloudflare
+        control_peer_->OnLocalSdp([this, subscriber_session_id](
+                                      const std::string &peer_id, const std::string &sdp,
+                                      const std::string &type) {
+            if (type != "answer") {
+                return;
+            }
+
+            DEBUG_PRINT("Sending answer to Cloudflare...");
+
+            std::string renegotiate_url = "https://rtc.live.cloudflare.com/v1/apps/" + cf_app_id_ +
+                                          "/sessions/" + subscriber_session_id + "/renegotiate";
+
+            nlohmann::json renegotiate_payload = {
+                {"sessionDescription", {{"type", "answer"}, {"sdp", sdp}}}};
+
+            std::map<std::string, std::string> headers = {{"Authorization", "Bearer " + cf_token_},
+                                                          {"Content-Type", "application/json"}};
+
+            auto response = HttpPut(renegotiate_url, renegotiate_payload, headers);
+
+            if (!response.empty()) {
+                INFO_PRINT("✅ Transport renegotiation complete");
+            } else {
+                ERROR_PRINT("Failed to send renegotiation answer");
+            }
+        });
+
+        // Set remote description (Cloudflare's offer)
+        // This will automatically trigger CreateAnswer() internally
+        std::string offer_sdp = establish_response["sessionDescription"]["sdp"];
+        control_peer_->SetRemoteSdp(offer_sdp, "offer");
+    }
+
+    // Step 4: Subscribe to remote 'control' DataChannel
+    // Wait longer for transport to be ready (SDP negotiation takes time)
+    auto self = weak_from_this();
+    auto subscribe_timer =
+        std::make_shared<boost::asio::steady_timer>(ioc_, std::chrono::milliseconds(2000));
+
+    subscribe_timer->async_wait(
+        [self, subscriber_session_id, control_session_id, subscribe_timer](
+            const boost::system::error_code &ec) {
+            if (ec) {
+                return;
+            }
+
+            auto service = self.lock();
+            if (!service) {
+                return;
+            }
+
+            std::string dc_new_url = "https://rtc.live.cloudflare.com/v1/apps/" +
+                                     service->cf_app_id_ + "/sessions/" + subscriber_session_id +
+                                     "/datachannels/new";
+
+            nlohmann::json dc_new_payload = {
+                {"dataChannels",
+                 {{{"location", "remote"},
+                   {"sessionId", control_session_id},
+                   {"dataChannelName", "control"}}}}};
+
+            std::map<std::string, std::string> headers = {
+                {"Authorization", "Bearer " + service->cf_token_},
+                {"Content-Type", "application/json"}};
+
+            DEBUG_PRINT("Subscribing to control DataChannel from session %s",
+                        control_session_id.c_str());
+
+            auto response = service->HttpPost(dc_new_url, dc_new_payload, headers);
+
+            if (response.empty() || !response.contains("dataChannels") ||
+                response["dataChannels"].empty()) {
+                ERROR_PRINT("Failed to subscribe to DataChannel");
+                return;
+            }
+
+            auto dc_info = response["dataChannels"][0];
+
+            // Get DataChannel ID (try different field names)
+            int dc_id = -1;
+            if (dc_info.contains("id")) {
+                dc_id = dc_info["id"].get<int>();
+            } else if (dc_info.contains("dataChannelId")) {
+                dc_id = dc_info["dataChannelId"].get<int>();
+            } else if (dc_info.contains("channelId")) {
+                dc_id = dc_info["channelId"].get<int>();
+            }
+
+            if (dc_id < 0) {
+                ERROR_PRINT("No DataChannel ID in response");
+                return;
+            }
+
+            INFO_PRINT("Subscribing to DataChannel with ID: %d", dc_id);
+
+            // Create negotiated DataChannel on control peer
+            if (!service->control_peer_) {
+                ERROR_PRINT("Control peer not available");
+                return;
+            }
+
+            // Check peer connection state before creating DataChannel
+            auto peer_conn = service->control_peer_->GetPeer();
+            if (!peer_conn) {
+                ERROR_PRINT("Peer connection not available");
+                return;
+            }
+
+            auto signaling_state = peer_conn->signaling_state();
+            DEBUG_PRINT("Peer signaling state: %d", (int)signaling_state);
+            
+            if (signaling_state != webrtc::PeerConnectionInterface::SignalingState::kStable) {
+                WARN_PRINT("Peer not in stable state yet, waiting...");
+                // Retry after another delay
+                auto retry_timer = std::make_shared<boost::asio::steady_timer>(
+                    service->ioc_, std::chrono::milliseconds(1000));
+                retry_timer->async_wait([service, dc_id, retry_timer](const boost::system::error_code &ec) {
+                    if (ec || !service->control_peer_) {
+                        return;
+                    }
+                    
+                    // Create RtcChannel first
+                    auto control_channel = service->control_peer_->CreateDataChannel(
+                        ChannelMode::Command, dc_id, true); // negotiated=true
+
+                    if (!control_channel) {
+                        ERROR_PRINT("Failed to create control DataChannel");
+                        return;
+                    }
+
+                    // Get underlying DataChannelInterface for RawChannel
+                    auto data_channel_interface = control_channel->GetDataChannel();
+                    
+                    // Wrap in RawChannel for JSON messages (not Protobuf)
+                    auto raw_channel = RawChannel::Create(data_channel_interface);
+                    service->control_channel_ = raw_channel;
+
+                    // Register JSON message handler
+                    raw_channel->SetMessageHandler([service](const std::string &message) {
+                        service->ProcessControlMessage(message);
+                    });
+
+                    INFO_PRINT("✅ Control DataChannel subscribed successfully (retry)");
+                });
+                return;
+            }
+
+            // Create RtcChannel first
+            auto control_channel = service->control_peer_->CreateDataChannel(
+                ChannelMode::Command, dc_id, true); // negotiated=true
+
+            if (!control_channel) {
+                ERROR_PRINT("Failed to create control DataChannel");
+                return;
+            }
+
+            // Get underlying DataChannelInterface for RawChannel
+            auto data_channel_interface = control_channel->GetDataChannel();
+            
+            // Wrap in RawChannel for JSON messages (not Protobuf)
+            auto raw_channel = RawChannel::Create(data_channel_interface);
+            service->control_channel_ = raw_channel;
+
+            // Register JSON message handler
+            raw_channel->SetMessageHandler([service](const std::string &message) {
+                service->ProcessControlMessage(message);
+            });
+
+            INFO_PRINT("✅ Control DataChannel subscribed successfully");
+        });
+}
+
+void CloudflareService::ProcessControlMessage(const std::string &json_message) {
+    try {
+        auto data = nlohmann::json::parse(json_message);
+
+        int throttle = data.value("throttle", 0);
+        int steer = data.value("steer", 0);
+
+        // Clamp values to safe ranges
+        throttle = std::clamp(throttle, -500, 500);
+        steer = std::clamp(steer, -1000, 1000);
+
+        // Log occasionally to reduce spam
+        static int msg_count = 0;
+        if ((throttle != 0 || steer != 0) && (msg_count++ % 100 == 0)) {
+            DEBUG_PRINT("Control RX: throttle=%d, steer=%d", throttle, steer);
+        }
+
+        // Send to UART controller via Conductor
+        if (conductor && conductor->config().enable_uart_control) {
+            auto uart = conductor->GetUartController();
+            if (uart && uart->IsConnected()) {
+                uart->SendCommand(throttle, steer);
+            } else {
+                WARN_PRINT("UART controller not connected");
+            }
+        }
+
+    } catch (const nlohmann::json::exception &e) {
+        ERROR_PRINT("Failed to parse control message JSON: %s", e.what());
+    } catch (const std::exception &e) {
+        ERROR_PRINT("Error processing control message: %s", e.what());
+    }
 }
 
 std::string CloudflareService::ExtractVideoMid(const std::string &sdp) {

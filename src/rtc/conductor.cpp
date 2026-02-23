@@ -35,6 +35,15 @@
 #include "track/v4l2dma_track_source.h"
 
 std::shared_ptr<Conductor> Conductor::Create(Args args) {
+    // Generate default UID if not provided (required for msid stream ID)
+    if (args.uid.empty()) {
+        args.uid = "stream_" + args.car_id;
+        if (args.uid == "stream_") {
+            args.uid = "stream_" + Utils::GenerateUuid();
+        }
+        INFO_PRINT("Generated UID for stream: %s", args.uid.c_str());
+    }
+    
     auto ptr = std::make_shared<Conductor>(args);
     ptr->InitializePeerConnectionFactory();
     ptr->InitializeTracks();

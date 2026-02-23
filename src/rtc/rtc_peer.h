@@ -115,6 +115,8 @@ class RtcPeer : public webrtc::PeerConnectionObserver,
     void SetPeer(rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer);
     rtc::scoped_refptr<webrtc::PeerConnectionInterface> GetPeer();
     std::shared_ptr<RtcChannel> CreateDataChannel(ChannelMode mode);
+    std::shared_ptr<RtcChannel> CreateDataChannel(ChannelMode mode, int channel_id, bool negotiated);
+    void CreateAnswer();
     std::string RestartIce(std::string ice_ufrag, std::string ice_pwd);
     void SetOnDataChannelCallback(OnRtcChannelCallback callback);
 
@@ -152,7 +154,6 @@ class RtcPeer : public webrtc::PeerConnectionObserver,
     std::thread sent_sdp_timeout_;
 
     std::string modified_sdp_;
-    webrtc::SdpParseError *modified_desc_error_;
     webrtc::PeerConnectionInterface::SignalingState signaling_state_;
     std::unique_ptr<webrtc::SessionDescriptionInterface> modified_desc_;
 

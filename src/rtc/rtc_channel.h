@@ -28,6 +28,9 @@ class RtcChannel : public webrtc::DataChannelObserver,
     std::string id() const;
     std::string label() const;
 
+    // Get underlying DataChannelInterface (for RawChannel wrapping)
+    rtc::scoped_refptr<webrtc::DataChannelInterface> GetDataChannel() const { return data_channel; }
+
     // webrtc::DataChannelObserver
     void OnStateChange() override;
     void OnMessage(const webrtc::DataBuffer &buffer) override;

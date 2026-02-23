@@ -38,7 +38,11 @@ Usage: $0 <command>
 Commands:
     pull        Download pre-built RaspiOS dev image from GitHub CI
     
-    build       Compile project using the CI image (fast!)
+    build       Compile project using the CI image (fast incremental build!)
+    
+    rebuild     Clean rebuild from scratch (slower, use when needed)
+    
+    build-debug Build with debug symbols for gdb debugging
     
     shell       Open bash shell in the dev environment
     
@@ -48,8 +52,15 @@ Examples:
     # First time - pull the image:
     $0 pull
     
-    # Then build your project:
+    # Then build your project (incremental - fast!):
     $0 build
+    
+    # Only changed files are recompiled
+    # To clean rebuild (when something is broken):
+    $0 rebuild
+    
+    # Build with debug symbols:
+    $0 build-debug
     
     # Or open a shell for debugging:
     $0 shell
@@ -88,7 +99,7 @@ cmd_pull() {
 }
 
 cmd_build() {
-    print_header "Building RaspberryPi-WebRTC"
+    print_header "Building RaspberryPi-WebRTC (Incremental)"
     
     if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
         echo "❌ Image not found: $IMAGE_NAME"
@@ -99,7 +110,52 @@ cmd_build() {
     
     cd "$PROJECT_DIR"
     
-    print_info "Compiling with real Raspberry Pi OS environment..."
+    print_info "Incremental build - only changed files will be recompiled..."
+    echo ""
+    
+    docker run --rm \
+        --platform=linux/arm64 \
+        -v "$PROJECT_DIR:/app" \
+        "$IMAGE_NAME" \
+        /bin/bash -c "
+            cd /app &&
+            mkdir -p build &&
+            cd build &&
+            cmake .. \
+                -DCMAKE_CXX_COMPILER=clang++ \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DPLATFORM=raspberrypi &&
+            make -j\$(nproc)
+        "
+    
+    echo ""
+    if [ -f "$PROJECT_DIR/build/pi-webrtc" ]; then
+        print_success "Build successful!"
+        echo ""
+        print_info "Binary: $PROJECT_DIR/build/pi-webrtc"
+        print_info "Size: $(du -h "$PROJECT_DIR/build/pi-webrtc" | cut -f1)"
+        echo ""
+        print_info "Test: ./build/pi-webrtc --help"
+        print_info "Next build will be even faster (incremental)"
+    else
+        echo "❌ Build failed"
+        exit 1
+    fi
+}
+
+cmd_rebuild() {
+    print_header "Clean Rebuild (from scratch)"
+    
+    if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+        echo "❌ Image not found: $IMAGE_NAME"
+        echo ""
+        print_info "Run: $0 pull"
+        exit 1
+    fi
+    
+    cd "$PROJECT_DIR"
+    
+    print_info "Cleaning build directory and rebuilding everything..."
     echo ""
     
     docker run --rm \
@@ -120,12 +176,58 @@ cmd_build() {
     
     echo ""
     if [ -f "$PROJECT_DIR/build/pi-webrtc" ]; then
-        print_success "Build successful!"
+        print_success "Rebuild successful!"
         echo ""
         print_info "Binary: $PROJECT_DIR/build/pi-webrtc"
         print_info "Size: $(du -h "$PROJECT_DIR/build/pi-webrtc" | cut -f1)"
         echo ""
         print_info "Test: ./build/pi-webrtc --help"
+    else
+        echo "❌ Build failed"
+        exit 1
+    fi
+}
+
+cmd_build_debug() {
+    print_header "Building RaspberryPi-WebRTC (DEBUG - Incremental)"
+    
+    if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+        echo "❌ Image not found: $IMAGE_NAME"
+        echo ""
+        print_info "Run: $0 pull"
+        exit 1
+    fi
+    
+    cd "$PROJECT_DIR"
+    
+    print_info "Incremental debug build with symbols for gdb..."
+    echo ""
+    
+    docker run --rm \
+        --platform=linux/arm64 \
+        -v "$PROJECT_DIR:/app" \
+        "$IMAGE_NAME" \
+        /bin/bash -c "
+            cd /app &&
+            mkdir -p build &&
+            cd build &&
+            cmake .. \
+                -DCMAKE_CXX_COMPILER=clang++ \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DCMAKE_CXX_FLAGS_DEBUG='-g -O0' \
+                -DPLATFORM=raspberrypi &&
+            make -j\$(nproc)
+        "
+    
+    echo ""
+    if [ -f "$PROJECT_DIR/build/pi-webrtc" ]; then
+        print_success "Debug build successful!"
+        echo ""
+        print_info "Binary: $PROJECT_DIR/build/pi-webrtc"
+        print_info "Size: $(du -h "$PROJECT_DIR/build/pi-webrtc" | cut -f1)"
+        echo ""
+        print_info "Run with gdb: gdb ./pi-webrtc"
+        print_info "Or: gdb --args ./pi-webrtc --use-cloudflare ..."
     else
         echo "❌ Build failed"
         exit 1
@@ -185,6 +287,12 @@ case "${1:-}" in
         ;;
     build)
         cmd_build
+        ;;
+    rebuild)
+        cmd_rebuild
+        ;;
+    build-debug)
+        cmd_build_debug
         ;;
     shell)
         cmd_shell

@@ -142,6 +142,45 @@ std::shared_ptr<RtcChannel> RtcPeer::CreateDataChannel(ChannelMode mode) {
     return channel;
 }
 
+std::shared_ptr<RtcChannel> RtcPeer::CreateDataChannel(ChannelMode mode, int channel_id, bool negotiated) {
+    struct webrtc::DataChannelInit init;
+    init.ordered = true;
+    init.id = channel_id;
+    init.negotiated = negotiated;
+    
+    if (mode == ChannelMode::Lossy) {
+        init.maxRetransmits = 0;
+    }
+
+    auto label = ChannelModeToString(mode);
+    auto result = peer_connection_->CreateDataChannelOrError(label, &init);
+
+    if (!result.ok()) {
+        ERROR_PRINT("Failed to create data channel: %s (id=%d)", label.c_str(), channel_id);
+        return nullptr;
+    }
+
+    auto dc = result.MoveValue();
+    std::shared_ptr<RtcChannel> channel = RtcChannel::Create(dc);
+
+    DEBUG_PRINT("Created negotiated DataChannel: %s (id=%d)", label.c_str(), channel_id);
+    
+    return channel;
+}
+
+void RtcPeer::CreateAnswer() {
+    DEBUG_PRINT("[PEER] CreateAnswer() entered for peer id=%s", id_.c_str());
+    
+    if (!peer_connection_) {
+        ERROR_PRINT("[PEER] peer_connection_ is null!");
+        return;
+    }
+    
+    DEBUG_PRINT("[PEER] Calling peer_connection_->CreateAnswer()");
+    peer_connection_->CreateAnswer(this, webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
+    DEBUG_PRINT("[PEER] peer_connection_->CreateAnswer() returned");
+}
+
 std::string RtcPeer::RestartIce(std::string ice_ufrag, std::string ice_pwd) {
     std::string remote_sdp;
     peer_connection_->remote_description()->ToString(&remote_sdp);
@@ -259,11 +298,11 @@ void RtcPeer::OnSuccess(webrtc::SessionDescriptionInterface *desc) {
     DEBUG_PRINT("[PEER] modified_sdp_ assigned");
 
     DEBUG_PRINT("[PEER] Creating session description...");
+    webrtc::SdpParseError error;
     modified_desc_ =
-        webrtc::CreateSessionDescription(desc->GetType(), modified_sdp_, modified_desc_error_);
+        webrtc::CreateSessionDescription(desc->GetType(), modified_sdp_, &error);
     if (!modified_desc_) {
-        ERROR_PRINT("Failed to create session description: %s",
-                    modified_desc_error_->description.c_str());
+        ERROR_PRINT("Failed to create session description: %s", error.description.c_str());
         return;
     }
     DEBUG_PRINT("[PEER] Session description created successfully");

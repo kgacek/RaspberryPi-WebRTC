@@ -59,6 +59,7 @@ class CloudflareService : public SignalingService,
     std::string active_session_id_;
     std::string control_session_id_;
 
+    rtc::scoped_refptr<RtcPeer> video_peer_;
     rtc::scoped_refptr<RtcPeer> control_peer_;
 
     // Config from Args

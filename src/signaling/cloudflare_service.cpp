@@ -65,22 +65,35 @@ void CloudflareService::Connect() {
     PeerConfig config;
     config.has_candidates_in_sdp = false;
 
-    auto peer = CreatePeer(config);
-    if (!peer) {
+    video_peer_ = CreatePeer(config);
+    if (!video_peer_) {
         ERROR_PRINT("Failed to create peer");
         return;
     }
 
-    peer->OnLocalSdp(
+    video_peer_->OnLocalSdp(
         [this](const std::string &peer_id, const std::string &sdp, const std::string &type) {
             OnLocalSdp(peer_id, sdp, type);
         });
 
-    INFO_PRINT("Video peer created: %s", peer->id().c_str());
+    INFO_PRINT("Video peer created: %s", video_peer_->id().c_str());
 
-    // Trigger SDP offer generation (critical for Cloudflare Calls!)
-    peer->CreateOffer();
-    INFO_PRINT("SDP offer generation triggered");
+    // Trigger SDP offer generation with small delay (gives tracks time to initialize)
+    // Use weak_ptr to avoid keeping service alive if it's being destroyed
+    auto self = weak_from_this();
+    auto offer_timer = std::make_shared<boost::asio::steady_timer>(
+        ioc_, std::chrono::milliseconds(100));
+    
+    offer_timer->async_wait([self, peer = video_peer_, offer_timer](const boost::system::error_code &ec) {
+        if (!ec) {
+            if (auto service = self.lock()) {
+                if (peer) {
+                    peer->CreateOffer();
+                    INFO_PRINT("SDP offer generation triggered");
+                }
+            }
+        }
+    });
 
     // 4. Start periodic tasks
     SendHeartbeat();
@@ -93,6 +106,10 @@ void CloudflareService::Disconnect() {
     INFO_PRINT("Disconnecting CloudflareService...");
     heartbeat_timer_.cancel();
     active_session_timer_.cancel();
+
+    if (video_peer_) {
+        video_peer_ = nullptr;
+    }
 
     if (control_peer_) {
         control_peer_ = nullptr;

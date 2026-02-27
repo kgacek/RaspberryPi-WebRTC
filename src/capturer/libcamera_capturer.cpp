@@ -56,10 +56,11 @@ void LibcameraCapturer::InitCamera() {
     camera_->acquire();
     camera_config_ = camera_->generateConfiguration({libcamera::StreamRole::VideoRecording});
 
+    // Don't set orientation for 0 (use camera default)
     if (rotation_ == 90) {
         camera_config_->orientation = libcamera::Orientation::Rotate90;
     } else if (rotation_ == 180) {
-        camera_config_->orientation = libcamera::Orientation::Rotate180;
+        camera_config_->orientation = libcamera::Orientation::Rotate0;
     } else if (rotation_ == 270) {
         camera_config_->orientation = libcamera::Orientation::Rotate270;
     }

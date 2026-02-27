@@ -59,7 +59,7 @@ struct Args {
     bool use_libcamera = false;
     uint32_t format = V4L2_PIX_FMT_MJPEG;
     std::string camera = "libcamera:0";
-    std::string v4l2_format = "mjpeg";
+    std::string v4l2_format = "i420";
 
     // sub stream for multiple resolution capture
     int sub_width = 0;

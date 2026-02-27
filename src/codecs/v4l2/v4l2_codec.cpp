@@ -179,9 +179,17 @@ bool V4L2Codec::CaptureBuffer() {
         struct v4l2_buffer buf = {0};
         struct v4l2_plane planes = {0};
         buf.memory = output_.memory;
-        buf.length = 1;
-        buf.m.planes = &planes;
         buf.type = output_.type;
+        
+        // Setup for multiplanar
+        if (output_.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE || 
+            output_.type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+            buf.length = output_.num_planes;
+        } else {
+            buf.length = 1;
+        }
+        buf.m.planes = &planes;
+        
         if (!V4L2Util::DequeueBuffer(fd_, &buf)) {
             return false;
         }
@@ -190,9 +198,17 @@ bool V4L2Codec::CaptureBuffer() {
         buf = {};
         planes = {};
         buf.memory = capture_.memory;
-        buf.length = 1;
-        buf.m.planes = &planes;
         buf.type = capture_.type;
+        
+        // Setup for multiplanar
+        if (capture_.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE || 
+            capture_.type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
+            buf.length = capture_.num_planes;
+        } else {
+            buf.length = 1;
+        }
+        buf.m.planes = &planes;
+        
         if (!V4L2Util::DequeueBuffer(fd_, &buf)) {
             return false;
         }

@@ -63,6 +63,18 @@ bool V4L2Util::InitBuffer(int fd, V4L2BufferGroup *gbuffer, v4l2_buf_type type, 
         return false;
     }
 
+    // Auto-detect multiplanar and adjust buffer type accordingly
+    bool is_multiplanar = V4L2Util::IsMultiPlaneVideo(&cap);
+    if (is_multiplanar) {
+        if (type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
+            type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+            DEBUG_PRINT("fd(%d) auto-detected multiplanar mode, using VIDEO_CAPTURE_MPLANE", fd);
+        } else if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+            type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+            DEBUG_PRINT("fd(%d) auto-detected multiplanar mode, using VIDEO_OUTPUT_MPLANE", fd);
+        }
+    }
+
     DEBUG_PRINT("fd(%d) driver '%s' on card '%s' in %s mode", fd, cap.driver, cap.card,
                 V4L2Util::IsSinglePlaneVideo(&cap)  ? "splane"
                 : V4L2Util::IsMultiPlaneVideo(&cap) ? "mplane"
@@ -76,8 +88,12 @@ bool V4L2Util::InitBuffer(int fd, V4L2BufferGroup *gbuffer, v4l2_buf_type type, 
 }
 
 bool V4L2Util::DequeueBuffer(int fd, v4l2_buffer *buffer) {
+    DEBUG_PRINT("fd(%d) dequeue: type=%u, memory=%u, length=%u, planes=%p", 
+                fd, buffer->type, buffer->memory, buffer->length, buffer->m.planes);
+    
     if (ioctl(fd, VIDIOC_DQBUF, buffer) < 0) {
-        ERROR_PRINT("fd(%d) dequeue buffer: %s", fd, strerror(errno));
+        ERROR_PRINT("fd(%d) dequeue buffer: type=%u, length=%u, error=%s", 
+                    fd, buffer->type, buffer->length, strerror(errno));
         return false;
     }
     return true;
@@ -133,9 +149,10 @@ bool V4L2Util::SetFps(int fd, v4l2_buf_type type, uint32_t fps) {
     streamparms.parm.capture.timeperframe.numerator = 1;
     streamparms.parm.capture.timeperframe.denominator = fps;
     if (ioctl(fd, VIDIOC_S_PARM, &streamparms) < 0) {
-        ERROR_PRINT("fd(%d) set fps(%d): %s", fd, fps, strerror(errno));
+        DEBUG_PRINT("fd(%d) set fps(%d): %s (may not be supported by this device)", fd, fps, strerror(errno));
         return false;
     }
+    DEBUG_PRINT("fd(%d) set fps to %d", fd, fps);
     return true;
 }
 
@@ -145,33 +162,69 @@ bool V4L2Util::SetFormat(int fd, V4L2BufferGroup *gbuffer, uint32_t width, uint3
     fmt.type = gbuffer->type;
     ioctl(fd, VIDIOC_G_FMT, &fmt);
 
-    DEBUG_PRINT("fd(%d) original formats: %s(%dx%d)", gbuffer->fd,
-                V4L2Util::FourccToString(fmt.fmt.pix_mp.pixelformat).c_str(), fmt.fmt.pix_mp.width,
-                fmt.fmt.pix_mp.height);
+    bool is_multiplanar = (gbuffer->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ||
+                          gbuffer->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 
-    if (width > 0 && height > 0) {
-        fmt.fmt.pix_mp.width = width;
-        fmt.fmt.pix_mp.height = height;
-        fmt.fmt.pix_mp.pixelformat = pixel_format;
-    }
+    if (is_multiplanar) {
+        DEBUG_PRINT("fd(%d) original formats: %s(%dx%d)", gbuffer->fd,
+                    V4L2Util::FourccToString(fmt.fmt.pix_mp.pixelformat).c_str(), fmt.fmt.pix_mp.width,
+                    fmt.fmt.pix_mp.height);
 
-    if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
-        ERROR_PRINT("fd(%d) set format(%s) : %s", fd,
-                    V4L2Util::FourccToString(fmt.fmt.pix_mp.pixelformat).c_str(), strerror(errno));
-        return false;
-    }
+        if (width > 0 && height > 0) {
+            fmt.fmt.pix_mp.width = width;
+            fmt.fmt.pix_mp.height = height;
+            fmt.fmt.pix_mp.pixelformat = pixel_format;
+        }
 
-    DEBUG_PRINT("fd(%d) latest format: %s(%dx%d)", gbuffer->fd,
-                V4L2Util::FourccToString(fmt.fmt.pix_mp.pixelformat).c_str(), fmt.fmt.pix_mp.width,
-                fmt.fmt.pix_mp.height);
-    // use the  return format
-    pixel_format = fmt.fmt.pix_mp.pixelformat;
-    gbuffer->num_planes = fmt.fmt.pix_mp.num_planes;
+        if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
+            ERROR_PRINT("fd(%d) set format(%s) : %s", fd,
+                        V4L2Util::FourccToString(fmt.fmt.pix_mp.pixelformat).c_str(), strerror(errno));
+            return false;
+        }
 
-    if (fmt.fmt.pix_mp.width != width || fmt.fmt.pix_mp.height != height) {
-        ERROR_PRINT("fd(%d) input size (%dx%d) doesn't match driver's output size (%dx%d): %s", fd,
-                    width, height, fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height, strerror(EINVAL));
-        throw std::runtime_error("the frame size doesn't match");
+        DEBUG_PRINT("fd(%d) latest format: %s(%dx%d) num_planes=%u", gbuffer->fd,
+                    V4L2Util::FourccToString(fmt.fmt.pix_mp.pixelformat).c_str(), fmt.fmt.pix_mp.width,
+                    fmt.fmt.pix_mp.height, fmt.fmt.pix_mp.num_planes);
+        // use the  return format
+        pixel_format = fmt.fmt.pix_mp.pixelformat;
+        gbuffer->num_planes = fmt.fmt.pix_mp.num_planes;
+        
+        DEBUG_PRINT("fd(%d) stored num_planes=%u in gbuffer", gbuffer->fd, gbuffer->num_planes);
+
+        if (fmt.fmt.pix_mp.width != width || fmt.fmt.pix_mp.height != height) {
+            ERROR_PRINT("fd(%d) input size (%dx%d) doesn't match driver's output size (%dx%d): %s", fd,
+                        width, height, fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height, strerror(EINVAL));
+            throw std::runtime_error("the frame size doesn't match");
+        }
+    } else {
+        DEBUG_PRINT("fd(%d) original formats: %s(%dx%d)", gbuffer->fd,
+                    V4L2Util::FourccToString(fmt.fmt.pix.pixelformat).c_str(), fmt.fmt.pix.width,
+                    fmt.fmt.pix.height);
+
+        if (width > 0 && height > 0) {
+            fmt.fmt.pix.width = width;
+            fmt.fmt.pix.height = height;
+            fmt.fmt.pix.pixelformat = pixel_format;
+        }
+
+        if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
+            ERROR_PRINT("fd(%d) set format(%s) : %s", fd,
+                        V4L2Util::FourccToString(fmt.fmt.pix.pixelformat).c_str(), strerror(errno));
+            return false;
+        }
+
+        DEBUG_PRINT("fd(%d) latest format: %s(%dx%d)", gbuffer->fd,
+                    V4L2Util::FourccToString(fmt.fmt.pix.pixelformat).c_str(), fmt.fmt.pix.width,
+                    fmt.fmt.pix.height);
+        // use the  return format
+        pixel_format = fmt.fmt.pix.pixelformat;
+        gbuffer->num_planes = 1;
+
+        if (fmt.fmt.pix.width != width || fmt.fmt.pix.height != height) {
+            ERROR_PRINT("fd(%d) input size (%dx%d) doesn't match driver's output size (%dx%d): %s", fd,
+                        width, height, fmt.fmt.pix.width, fmt.fmt.pix.height, strerror(EINVAL));
+            throw std::runtime_error("the frame size doesn't match");
+        }
     }
 
     return true;
@@ -182,9 +235,10 @@ bool V4L2Util::SetCtrl(int fd, uint32_t id, int32_t value) {
     ctrls.id = id;
     ctrls.value = value;
     if (ioctl(fd, VIDIOC_S_CTRL, &ctrls) < 0) {
-        ERROR_PRINT("fd(%d) set ctrl(%d): %s", fd, id, strerror(errno));
+        DEBUG_PRINT("fd(%d) set ctrl(%d): %s (may not be supported)", fd, id, strerror(errno));
         return false;
     }
+    DEBUG_PRINT("fd(%d) set ctrl(%d) = %d", fd, id, value);
     return true;
 }
 
@@ -202,9 +256,10 @@ bool V4L2Util::SetExtCtrl(int fd, uint32_t id, int32_t value) {
     ctrl.value = value;
 
     if (ioctl(fd, VIDIOC_S_EXT_CTRLS, &ctrls) < 0) {
-        ERROR_PRINT("fd(%d) set ext ctrl(%d): %s", fd, id, strerror(errno));
+        DEBUG_PRINT("fd(%d) set ext ctrl(%d): %s (may not be supported)", fd, id, strerror(errno));
         return false;
     }
+    DEBUG_PRINT("fd(%d) set ext ctrl(%d) = %d", fd, id, value);
     return true;
 }
 
@@ -225,28 +280,56 @@ bool V4L2Util::StreamOff(int fd, v4l2_buf_type type) {
 }
 
 void V4L2Util::UnMap(V4L2BufferGroup *gbuffer) {
+    bool is_multiplanar = (gbuffer->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ||
+                          gbuffer->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
+    
     for (int i = 0; i < gbuffer->num_buffers; i++) {
         if (gbuffer->buffers[i].dmafd > 0) {
             DEBUG_PRINT("close (%d) dmafd", gbuffer->buffers[i].dmafd);
             close(gbuffer->buffers[i].dmafd);
         }
-        if (gbuffer->buffers[i].start != nullptr) {
-            DEBUG_PRINT("unmapped (%d) buffers", gbuffer->fd);
-            munmap(gbuffer->buffers[i].start, gbuffer->buffers[i].length);
-            gbuffer->buffers[i].start = nullptr;
+        
+        if (is_multiplanar) {
+            // Unmap all planes for multiplanar
+            for (uint32_t p = 0; p < gbuffer->num_planes; p++) {
+                if (gbuffer->buffers[i].plane_start[p] != nullptr) {
+                    DEBUG_PRINT("unmapped (%d) buffer %d plane %u", gbuffer->fd, i, p);
+                    munmap(gbuffer->buffers[i].plane_start[p], gbuffer->buffers[i].plane_length[p]);
+                    gbuffer->buffers[i].plane_start[p] = nullptr;
+                }
+            }
+        } else {
+            if (gbuffer->buffers[i].start != nullptr) {
+                DEBUG_PRINT("unmapped (%d) buffers", gbuffer->fd);
+                munmap(gbuffer->buffers[i].start, gbuffer->buffers[i].length);
+                gbuffer->buffers[i].start = nullptr;
+            }
         }
     }
 }
 
 bool V4L2Util::MMap(int fd, V4L2BufferGroup *gbuffer) {
+    bool is_multiplanar = (gbuffer->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ||
+                          gbuffer->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
+    
     for (int i = 0; i < gbuffer->num_buffers; i++) {
         V4L2Buffer *buffer = &gbuffer->buffers[i];
         v4l2_buffer *inner = &buffer->inner;
         inner->type = gbuffer->type;
         inner->memory = V4L2_MEMORY_MMAP;
-        inner->length = 1;
         inner->index = i;
-        inner->m.planes = buffer->plane;
+        
+        if (is_multiplanar) {
+            inner->length = gbuffer->num_planes;
+            inner->m.planes = buffer->plane;
+            // Initialize planes
+            for (uint32_t j = 0; j < gbuffer->num_planes; j++) {
+                buffer->plane[j].length = 0;
+                buffer->plane[j].bytesused = 0;
+            }
+        } else {
+            inner->length = 0;
+        }
 
         if (ioctl(fd, VIDIOC_QUERYBUF, inner) < 0) {
             ERROR_PRINT("fd(%d) query buffer: %s", fd, strerror(errno));
@@ -268,9 +351,29 @@ bool V4L2Util::MMap(int fd, V4L2BufferGroup *gbuffer) {
 
         if (gbuffer->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ||
             gbuffer->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
-            buffer->length = inner->m.planes[0].length;
-            buffer->start = mmap(NULL, buffer->length, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
-                                 inner->m.planes[0].m.mem_offset);
+            // Multiplanar: map each plane separately
+            for (uint32_t p = 0; p < gbuffer->num_planes; p++) {
+                buffer->plane_length[p] = inner->m.planes[p].length;
+                buffer->plane_start[p] = mmap(NULL, buffer->plane_length[p], 
+                                             PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+                                             inner->m.planes[p].m.mem_offset);
+                
+                if (MAP_FAILED == buffer->plane_start[p]) {
+                    ERROR_PRINT("fd(%d) mmap failed for plane %u: %s", gbuffer->fd, p, strerror(errno));
+                    // Unmap already mapped planes
+                    for (uint32_t q = 0; q < p; q++) {
+                        munmap(buffer->plane_start[q], buffer->plane_length[q]);
+                        buffer->plane_start[q] = nullptr;
+                    }
+                    return false;
+                }
+                
+                DEBUG_PRINT("fd(%d) mapped plane %u at %p (length: %u)", gbuffer->fd, p,
+                           buffer->plane_start[p], buffer->plane_length[p]);
+            }
+            // For backward compatibility, set start to first plane
+            buffer->start = buffer->plane_start[0];
+            buffer->length = buffer->plane_length[0];
         } else if (gbuffer->type == V4L2_BUF_TYPE_VIDEO_CAPTURE ||
                    gbuffer->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
             buffer->length = inner->length;
@@ -309,14 +412,21 @@ bool V4L2Util::AllocateBuffer(int fd, V4L2BufferGroup *gbuffer, int num_buffers)
     if (gbuffer->memory == V4L2_MEMORY_MMAP) {
         return MMap(fd, gbuffer);
     } else if (gbuffer->memory == V4L2_MEMORY_DMABUF) {
+        bool is_multiplanar = (gbuffer->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ||
+                              gbuffer->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
         for (int i = 0; i < num_buffers; i++) {
             V4L2Buffer *buffer = &gbuffer->buffers[i];
             v4l2_buffer *inner = &buffer->inner;
             inner->type = gbuffer->type;
             inner->memory = V4L2_MEMORY_DMABUF;
             inner->index = i;
-            inner->length = 1;
-            inner->m.planes = buffer->plane;
+            
+            if (is_multiplanar) {
+                inner->length = gbuffer->num_planes;
+                inner->m.planes = buffer->plane;
+            } else {
+                inner->length = 1;
+            }
         }
     }
 

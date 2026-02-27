@@ -10,6 +10,9 @@
 /* Save single-plane data with stride equal to width */
 struct V4L2Buffer {
     void *start = nullptr;
+    void *plane_start[VIDEO_MAX_PLANES] = {nullptr}; // For multiplanar: pointer to each plane
+    uint32_t plane_length[VIDEO_MAX_PLANES] = {0};   // Length of each plane
+    uint32_t plane_bytesused[VIDEO_MAX_PLANES] = {0}; // Bytes used in each plane
     uint32_t pix_fmt = 0;
     uint32_t length = 0;
     uint32_t flags = 0;
@@ -29,7 +32,11 @@ struct V4L2Buffer {
           timestamp(ts) {}
 
     static V4L2Buffer FromV4L2(void *start, const v4l2_buffer &v4l2, uint32_t fmt) {
-        V4L2Buffer buf(start, fmt, v4l2.bytesused, -1, v4l2.flags, v4l2.timestamp);
+        // For multiplanar, bytesused is in planes[0].bytesused, for single-plane it's in bytesused
+        uint32_t bytesused = (v4l2.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE || 
+                             v4l2.type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) 
+                             ? v4l2.m.planes[0].bytesused : v4l2.bytesused;
+        V4L2Buffer buf(start, fmt, bytesused, -1, v4l2.flags, v4l2.timestamp);
         buf.inner = v4l2;
         return buf;
     }

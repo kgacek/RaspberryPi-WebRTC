@@ -1,0 +1,213 @@
+name: Build for Radxa Zero 3 in Docker
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+    paths-ignore:
+      - 'doc/**'
+      - 'example/**'
+      - '.github/**'
+      - '.vscode/**'
+      - '*.md'
+  workflow_dispatch:
+
+jobs:
+  prepare-env:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      armbian_version: ${{ steps.os_version.outputs.name }}
+    steps:
+      - name: Extract OS Version
+        id: os_version
+        run: |
+          # Get the latest Armbian Trixie minimal image for Radxa Zero 3
+          BASE_URL="https://dl.armbian.com/radxa-zero3/Trixie_vendor_minimal"
+          FILE_URL=$(curl -s "$BASE_URL/" | grep -oP 'Armbian_[0-9]+\.[0-9]+\.[0-9]+_Radxa-zero3_[^"]+\.img\.xz' | head -n 1)
+          if [ -z "$FILE_URL" ]; then
+            FILE_URL="Armbian_24.11.0_Radxa-zero3_trixie_vendor_6.1.75_minimal.img.xz"
+          fi
+          # Extract version info (e.g. armbian-trixie-vendor-arm64)
+          OS_NAME="armbian-trixie-vendor-arm64"
+          echo "Detected OS version: $OS_NAME"
+          echo "Using image: $FILE_URL"
+          echo "name=$OS_NAME" >> $GITHUB_OUTPUT
+          echo "image_file=$FILE_URL" >> $GITHUB_OUTPUT
+
+      - name: Download and Prepare Armbian Image
+        run: |
+          BASE_URL="https://dl.armbian.com/radxa-zero3/Trixie_vendor_minimal"
+          IMAGE_FILE="${{ steps.os_version.outputs.image_file }}"
+          
+          # Download the latest Armbian image
+          echo "Downloading $BASE_URL/$IMAGE_FILE"
+          wget -q "$BASE_URL/$IMAGE_FILE" -O armbian.img.xz || {
+            # Fallback to a known working version
+            echo "Download failed, trying alternative method..."
+            wget -q https://dl.armbian.com/radxa-zero3/Trixie_vendor_minimal/ -O - | \
+              grep -oP 'href="\K[^"]*\.img\.xz' | head -n 1 | \
+              xargs -I {} wget -q "https://dl.armbian.com/radxa-zero3/Trixie_vendor_minimal/{}" -O armbian.img.xz
+          }
+          
+          xz -d armbian.img.xz
+
+          SECTOR_SIZE=512
+          # Armbian typically has rootfs on partition 1
+          START_SECTOR=$(fdisk -l armbian.img | awk '/^armbian.img1/ { print $2 }')
+          if [ -z "$START_SECTOR" ]; then
+            echo "Error: Could not find partition 1"
+            fdisk -l armbian.img
+            exit 1
+          fi
+          OFFSET=$((START_SECTOR * SECTOR_SIZE))
+          echo "Mounting with offset=$OFFSET"
+
+          sudo mkdir -p armbian-root
+          sudo mount -o loop,offset=$OFFSET armbian.img armbian-root
+          sudo tar -C armbian-root -cf armbian-rootfs.tar .
+          docker import armbian-rootfs.tar radxa-docker-image
+          sudo umount armbian-root
+
+      - name: Install dependencies
+        run: |
+          docker run --name radxa-container -v ${{ github.workspace }}:/app radxa-docker-image /usr/bin/bash -c "
+            export DEBIAN_FRONTEND=noninteractive &&
+            export DEBCONF_NONINTERACTIVE_SEEN=true &&
+            apt update --fix-missing &&
+            apt install -y --no-install-recommends \
+              wget \
+              curl \
+              cmake \
+              clang \
+              build-essential \
+              libboost-program-options-dev \
+              libboost-system-dev \
+              libboost-thread-dev \
+              libavformat-dev \
+              libavcodec-dev \
+              libavutil-dev \
+              libswscale-dev \
+              libpulse-dev \
+              libasound2-dev \
+              libjpeg-dev \
+              libmosquitto-dev \
+              libcurl4-openssl-dev \
+              protobuf-compiler \
+              libprotobuf-dev \
+              libv4l-dev || true &&
+            
+            # Note: Using V4L2 only, not libcamera (due to Armbian Trixie compatibility)
+            
+            cd /app &&
+            wget -q https://github.com/TzuHuanTai/Native-WebRTC-Build/releases/download/5790/libwebrtc-arm64.tar.gz &&
+            tar -xzf libwebrtc-arm64.tar.gz &&
+            mkdir -p /usr/local/include/webrtc &&
+            mv include/* /usr/local/include/webrtc &&
+            mv lib/* /usr/local/lib &&
+            mkdir -p /usr/local/include/nlohmann &&
+            curl -L https://raw.githubusercontent.com/nlohmann/json/v3.11.3/single_include/nlohmann/json.hpp -o /usr/local/include/nlohmann/json.hpp
+          "
+
+      - name: Commit Docker Image
+        run: |
+          docker commit radxa-container radxa-docker-env
+          docker rm radxa-container
+
+      - name: Save Docker image
+        run: docker save radxa-docker-env -o radxa-docker-env.tar
+
+      - name: Cache Docker Image
+        uses: actions/cache@v4
+        with:
+          path: radxa-docker-env.tar
+          key: radxa-docker-env-${{ runner.os }}-${{ hashFiles('**/Dockerfile', '.github/workflows/**') }}
+          restore-keys: |
+            radxa-docker-env-${{ runner.os }}-
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and Push Armbian Dev Image
+        run: |
+          ARMBIAN_VERSION="${{ needs.prepare-env.outputs.armbian_version }}"
+          if [ -z "$ARMBIAN_VERSION" ]; then
+            echo "Warning: armbian_version is empty, using default"
+            ARMBIAN_VERSION="armbian-trixie-vendor-arm64"
+          fi
+          
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/radxa-zero3-webrtc-dev:${ARMBIAN_VERSION}"
+          IMAGE_LATEST="ghcr.io/${{ github.repository_owner }}/radxa-zero3-webrtc-dev:latest"
+          
+          echo "Tagging images:"
+          echo "  - $IMAGE_NAME"
+          echo "  - $IMAGE_LATEST"
+          
+          docker tag radxa-docker-env "$IMAGE_NAME"
+          docker tag radxa-docker-env "$IMAGE_LATEST"
+          
+          docker push "$IMAGE_NAME"
+          docker push "$IMAGE_LATEST"
+          
+          echo "✅ Published development image:"
+          echo "   $IMAGE_NAME"
+          echo "   $IMAGE_LATEST"
+  
+  build:
+    runs-on: ubuntu-24.04-arm
+    needs: prepare-env
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore Docker Image from Cache
+        uses: actions/cache@v4
+        with:
+          path: radxa-docker-env.tar
+          key: radxa-docker-env-${{ runner.os }}-${{ hashFiles('**/Dockerfile', '.github/workflows/**') }}
+          restore-keys: |
+            radxa-docker-env-${{ runner.os }}-
+
+      - name: Load Docker Image
+        run: docker load -i radxa-docker-env.tar
+
+      - name: Build inside Docker
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/app radxa-docker-env /usr/bin/bash -c "
+            cd /app &&
+            mkdir -p build &&
+            cd build &&
+            cmake .. -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DUSE_LIBCAMERA_CAPTURE=OFF &&
+            make -j$(nproc)
+          "
+
+      - name: Zip binary
+        id: zip-binary
+        run: |
+          cd build
+          ARMBIAN_VERSION="${{ needs.prepare-env.outputs.armbian_version }}"
+          if [ -z "$ARMBIAN_VERSION" ]; then
+            ARMBIAN_VERSION="armbian-trixie-vendor-arm64"
+          fi
+          
+          if [ "${{ matrix.build_type }}" == "Release" ]; then
+            FILENAME="pi-webrtc-radxa-zero3-${{ github.ref_name }}_${ARMBIAN_VERSION}.tar.gz"
+          else
+            FILENAME="pi-webrtc-radxa-zero3-${{ github.ref_name }}_${ARMBIAN_VERSION}_debug.tar.gz"
+          fi
+          sudo tar -czvf $FILENAME pi-webrtc
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+
+      - name: Upload to GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/${{ steps.zip-binary.outputs.filename }}

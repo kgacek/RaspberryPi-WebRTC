@@ -213,6 +213,7 @@ cmd_build_debug() {
             cd build &&
             cmake .. \
                 -DCMAKE_CXX_COMPILER=clang++ \
+                -DUSE_LIBCAMERA_CAPTURE=OFF \
                 -DCMAKE_BUILD_TYPE=Debug \
                 -DCMAKE_CXX_FLAGS_DEBUG='-g -O0' \
                 -DPLATFORM=raspberrypi &&

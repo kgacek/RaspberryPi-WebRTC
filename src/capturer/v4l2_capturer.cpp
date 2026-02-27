@@ -78,20 +78,37 @@ void V4L2Capturer::Initialize() {
         }
     }
 
-    if (!V4L2Util::SetFps(fd_, capture_.type, fps_)) {
-        ERROR_PRINT("Unable to set fps");
-    }
+    // FPS may not be supported by some ISPs (like Rockchip)
+    V4L2Util::SetFps(fd_, capture_.type, fps_);
 
-    if (!V4L2Util::SetCtrl(fd_, V4L2_CID_ROTATE, rotation_)) {
-        ERROR_PRINT("Unable to set the rotation angle");
-    }
+    // Rotation may not be supported by ISP cameras
+    V4L2Util::SetCtrl(fd_, V4L2_CID_ROTATE, rotation_);
 
     if (!V4L2Util::SetFormat(fd_, &capture_, width_, height_, format_)) {
         ERROR_PRINT("Unable to set the resolution: %dx%d", width_, height_);
     }
 
-    if (!SetControls(V4L2_CID_MPEG_VIDEO_BITRATE, 10 * 1024 * 1024)) {
-        ERROR_PRINT("Unable to set video bitrate");
+    // Bitrate control is only for H264 encoding cameras
+    if (format_ == V4L2_PIX_FMT_H264) {
+        SetControls(V4L2_CID_MPEG_VIDEO_BITRATE, 10 * 1024 * 1024);
+    }
+    
+    // Try to enable auto exposure and auto gain for raw cameras
+    if (format_ != V4L2_PIX_FMT_H264 && format_ != V4L2_PIX_FMT_MJPEG) {
+        // Enable auto exposure (0 = Auto, 1 = Manual)
+        if (V4L2Util::SetCtrl(fd_, V4L2_CID_EXPOSURE_AUTO, 0)) {
+            DEBUG_PRINT("Auto exposure enabled");
+        }
+        
+        // Enable auto white balance
+        if (V4L2Util::SetCtrl(fd_, V4L2_CID_AUTO_WHITE_BALANCE, 1)) {
+            DEBUG_PRINT("Auto white balance enabled");
+        }
+        
+        // Enable auto gain
+        if (V4L2Util::SetCtrl(fd_, V4L2_CID_AUTOGAIN, 1)) {
+            DEBUG_PRINT("Auto gain enabled");
+        }
     }
 }
 
@@ -152,14 +169,45 @@ void V4L2Capturer::CaptureImage() {
     }
 
     v4l2_buffer buf = {};
+    v4l2_plane planes[VIDEO_MAX_PLANES] = {};
     buf.type = capture_.type;
     buf.memory = capture_.memory;
+    
+    // Setup planes for multiplanar
+    if (capture_.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+        buf.length = capture_.num_planes;
+        buf.m.planes = planes;
+        
+        // Initialize all plane fields to 0
+        for (uint32_t i = 0; i < capture_.num_planes; i++) {
+            memset(&planes[i], 0, sizeof(v4l2_plane));
+        }
+        
+        DEBUG_PRINT("Dequeue setup: type=%u, num_planes=%u", buf.type, capture_.num_planes);
+    }
 
     if (!V4L2Util::DequeueBuffer(fd_, &buf)) {
         return;
     }
 
-    auto buffer = V4L2Buffer::FromV4L2((uint8_t *)capture_.buffers[buf.index].start, buf, format_);
+    // Copy plane info for multiplanar
+    V4L2Buffer &cap_buffer = capture_.buffers[buf.index];
+    if (capture_.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+        for (uint32_t i = 0; i < capture_.num_planes; i++) {
+            cap_buffer.plane_bytesused[i] = buf.m.planes[i].bytesused;
+        }
+    }
+
+    auto buffer = V4L2Buffer::FromV4L2((uint8_t *)cap_buffer.start, buf, format_);
+    
+    // Copy multiplanar info to buffer
+    if (capture_.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+        for (uint32_t i = 0; i < VIDEO_MAX_PLANES; i++) {
+            buffer.plane_start[i] = cap_buffer.plane_start[i];
+            buffer.plane_length[i] = cap_buffer.plane_length[i];
+            buffer.plane_bytesused[i] = cap_buffer.plane_bytesused[i];
+        }
+    }
 
     if (hw_accel_ && format_ == V4L2_PIX_FMT_H264) {
         has_first_keyframe_ = (buffer.flags & V4L2_BUF_FLAG_KEYFRAME) != 0;
